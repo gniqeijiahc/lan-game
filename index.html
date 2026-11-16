@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>扫码联机测试</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2433; --muted:#6b7385; --accent:#2f6fed; --ok:#1a9b52; --warn:#c77a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171d; --card:#1d222b; --text:#e8ebf1; --muted:#98a1b3; --accent:#6d9bff; --ok:#4cc380; --warn:#e5a63c; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  main { max-width:480px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 12px; }
+  .card { background:var(--card); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  #status { font-weight:600; }
+  #status.ok { color:var(--ok); } #status.wait { color:var(--warn); }
+  .muted { color:var(--muted); font-size:14px; }
+  #qr { width:220px; max-width:70%; margin:8px auto; background:#fff; padding:6px; border-radius:8px; }
+  #qr svg { width:100%; height:auto; display:block; }
+  .row { display:flex; gap:8px; }
+  input[type=text] { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--muted); border-radius:10px; background:transparent; color:var(--text); font:inherit; }
+  button { padding:10px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  #log { height:220px; overflow-y:auto; border:1px solid rgba(128,128,128,.3); border-radius:10px; padding:8px; margin-bottom:10px; font-size:15px; }
+  #log div { margin:2px 0; word-break:break-all; }
+  .me { color:var(--accent); } .sys { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>📱 扫码联机测试</h1>
+
+  <div class="card">
+    <div id="status" class="wait">正在连接…</div>
+    <div id="detail" class="muted"></div>
+  </div>
+
+  <div class="card" id="hostBox">
+    <div class="muted">让对方用手机相机扫这个码，打开后会自动加入：</div>
+    <div id="qr"></div>
+    <div class="row">
+      <input type="text" id="link" readonly>
+      <button id="copy" type="button">复制</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="log"></div>
+    <form id="form" class="row">
+      <input type="text" id="msg" placeholder="发条消息试试" autocomplete="off">
+      <button>发送</button>
+    </form>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script type="module">
+const $ = id => document.getElementById(id)
+const params = new URLSearchParams(location.search)
+const strategy = params.get('s') || 'nostr'   // 可选: nostr(默认) / torrent / mqtt
+const STRATEGY_URL = {
+  nostr:   'https://esm.run/trystero',
+  torrent: 'https://esm.run/@trystero-p2p/torrent',
+  mqtt:    'https://esm.run/@trystero-p2p/mqtt'
+}
+
+// 房间号放在网址 # 后面：没有就当房主，自动生成一个
+let roomId = location.hash.slice(1)
+const isHost = !roomId
+if (isHost) {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789'
+  roomId = Array.from(crypto.getRandomValues(new Uint8Array(10)), b => alphabet[b % alphabet.length]).join('')
+  history.replaceState(null, '', location.pathname + location.search + '#' + roomId)
+}
+
+function log(text, cls = '') {
+  const d = document.createElement('div')
+  d.className = cls
+  d.textContent = text
+  $('log').appendChild(d)
+  $('log').scrollTop = $('log').scrollHeight
+}
+function setStatus(text, ok) {
+  $('status').textContent = text
+  $('status').className = ok ? 'ok' : 'wait'
+}
+
+// 二维码 = 当前网址（含房间号）
+if (isHost) {
+  $('link').value = location.href
+  try {
+    const qr = qrcode(0, 'M')
+    qr.addData(location.href)
+    qr.make()
+    $('qr').innerHTML = qr.createSvgTag(6, 2)
+  } catch (e) {
+    $('qr').textContent = '二维码生成失败，请复制链接发给对方'
+  }
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(location.href); $('copy').textContent = '已复制' }
+    catch { $('link').select() }
+  }
+} else {
+  $('hostBox').hidden = true
+}
+
+try {
+  const {joinRoom} = await import(STRATEGY_URL[strategy] || STRATEGY_URL.nostr)
+  // password 会让数据在两端之间加密；appId 请改成你自己游戏的唯一名字
+  const room = joinRoom({appId: 'chai-lan-games-demo', password: roomId}, roomId)
+  const [sendChat, onChat] = room.makeAction('chat')
+
+  const peers = new Set()
+  const refresh = () => {
+    if (peers.size) setStatus(`✅ 已连接（${peers.size} 位对手）`, true)
+    else setStatus(isHost ? '等待对方扫码加入…' : '正在寻找房主…', false)
+  }
+  refresh()
+  $('detail').textContent = `房间 ${roomId} · 信令通道：${strategy}`
+
+  room.onPeerJoin(async id => {
+    peers.add(id); refresh()
+    log('有人加入了', 'sys')
+    try { const ms = await room.ping(id); $('detail').textContent = `房间 ${roomId} · 延迟约 ${Math.round(ms)} ms` } catch {}
+  })
+  room.onPeerLeave(id => { peers.delete(id); refresh(); log('对方离开了', 'sys') })
+  onChat((text, id) => log('对方：' + text))
+
+  $('form').onsubmit = e => {
+    e.preventDefault()
+    const t = $('msg').value.trim()
+    if (!t) return
+    sendChat(t)
+    log('我：' + t, 'me')
+    $('msg').value = ''
+  }
+} catch (err) {
+  setStatus('❌ 加载联机库失败', false)
+  $('detail').textContent = '请检查网络，或在网址后加 ?s=torrent 换一个信令通道再试。' + err
+}
+</script>
+</body>
+</html>
