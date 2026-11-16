@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>扫码联机测试</title>
+<title>剪刀石头布联机</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2433; --muted:#6b7385; --accent:#2f6fed; --ok:#1a9b52; --warn:#c77a00; }
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2433; --muted:#6b7385; --accent:#2f6fed; --ok:#1a9b52; --warn:#c77a00; --bad:#d6453d; --line:rgba(128,128,128,.3); }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#14171d; --card:#1d222b; --text:#e8ebf1; --muted:#98a1b3; --accent:#6d9bff; --ok:#4cc380; --warn:#e5a63c; }
+    :root { --bg:#14171d; --card:#1d222b; --text:#e8ebf1; --muted:#98a1b3; --accent:#6d9bff; --ok:#4cc380; --warn:#e5a63c; --bad:#ff7b72; }
   }
-  * { box-sizing:border-box; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
   main { max-width:480px; margin:0 auto; padding:16px; }
   h1 { font-size:20px; margin:8px 0 12px; }
@@ -20,16 +20,34 @@
   #qr { width:220px; max-width:70%; margin:8px auto; background:#fff; padding:6px; border-radius:8px; }
   #qr svg { width:100%; height:auto; display:block; }
   .row { display:flex; gap:8px; }
-  input[type=text] { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--muted); border-radius:10px; background:transparent; color:var(--text); font:inherit; }
-  button { padding:10px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
-  #log { height:220px; overflow-y:auto; border:1px solid rgba(128,128,128,.3); border-radius:10px; padding:8px; margin-bottom:10px; font-size:15px; }
-  #log div { margin:2px 0; word-break:break-all; }
-  .me { color:var(--accent); } .sys { color:var(--muted); font-size:13px; }
+  input[type=text] { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:transparent; color:var(--text); font:inherit; }
+  button.small { padding:10px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+
+  .score { display:flex; justify-content:space-around; text-align:center; }
+  .score b { display:block; font-size:28px; line-height:1.2; }
+  .score span { font-size:13px; color:var(--muted); }
+  .round { text-align:center; color:var(--muted); font-size:14px; margin-bottom:8px; }
+
+  #arena { display:flex; align-items:center; justify-content:space-around; min-height:110px; margin:10px 0; }
+  .hand { text-align:center; }
+  .hand .big { font-size:64px; line-height:1.1; }
+  .hand .who { font-size:13px; color:var(--muted); }
+  .vs { color:var(--muted); font-weight:600; }
+  #result { text-align:center; font-size:22px; font-weight:700; min-height:34px; }
+  #result.win { color:var(--ok); } #result.lose { color:var(--bad); } #result.draw { color:var(--warn); }
+  #hint { text-align:center; color:var(--muted); font-size:14px; min-height:22px; margin-bottom:6px; }
+
+  #choices { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  #choices button { padding:14px 0; border:2px solid var(--line); border-radius:14px; background:var(--card); color:var(--text); font:inherit; cursor:pointer; }
+  #choices button .e { display:block; font-size:42px; line-height:1.2; }
+  #choices button .n { font-size:14px; color:var(--muted); }
+  #choices button.sel { border-color:var(--accent); background:rgba(47,111,237,.1); }
+  #choices button:disabled { opacity:.45; cursor:not-allowed; }
 </style>
 </head>
 <body>
 <main>
-  <h1>📱 扫码联机测试</h1>
+  <h1>✊✌️✋ 剪刀石头布</h1>
 
   <div class="card">
     <div id="status" class="wait">正在连接…</div>
@@ -41,16 +59,31 @@
     <div id="qr"></div>
     <div class="row">
       <input type="text" id="link" readonly>
-      <button id="copy" type="button">复制</button>
+      <button class="small" id="copy" type="button">复制</button>
     </div>
   </div>
 
-  <div class="card">
-    <div id="log"></div>
-    <form id="form" class="row">
-      <input type="text" id="msg" placeholder="发条消息试试" autocomplete="off">
-      <button>发送</button>
-    </form>
+  <div class="card" id="game">
+    <div class="score">
+      <div><b id="sMe">0</b><span>我</span></div>
+      <div><b id="sDraw">0</b><span>平局</span></div>
+      <div><b id="sThem">0</b><span>对方</span></div>
+    </div>
+    <div class="round" id="round">第 1 局</div>
+
+    <div id="arena">
+      <div class="hand"><div class="big" id="hMe">❔</div><div class="who">我</div></div>
+      <div class="vs">VS</div>
+      <div class="hand"><div class="big" id="hThem">❔</div><div class="who">对方</div></div>
+    </div>
+    <div id="result"></div>
+    <div id="hint"></div>
+
+    <div id="choices">
+      <button data-c="rock"><span class="e">✊</span><span class="n">石头</span></button>
+      <button data-c="scissors"><span class="e">✌️</span><span class="n">剪刀</span></button>
+      <button data-c="paper"><span class="e">✋</span><span class="n">布</span></button>
+    </div>
   </div>
 </main>
 
@@ -65,7 +98,11 @@ const STRATEGY_URL = {
   mqtt:    'https://esm.run/@trystero-p2p/mqtt'
 }
 
-// 房间号放在网址 # 后面：没有就当房主，自动生成一个
+const BEATS = {rock: 'scissors', scissors: 'paper', paper: 'rock'}
+const ICON  = {rock: '✊', scissors: '✌️', paper: '✋'}
+const NAME  = {rock: '石头', scissors: '剪刀', paper: '布'}
+
+// ---------- 房间号：放在网址 # 后面，没有就当房主并自动生成 ----------
 let roomId = location.hash.slice(1)
 const isHost = !roomId
 if (isHost) {
@@ -74,19 +111,12 @@ if (isHost) {
   history.replaceState(null, '', location.pathname + location.search + '#' + roomId)
 }
 
-function log(text, cls = '') {
-  const d = document.createElement('div')
-  d.className = cls
-  d.textContent = text
-  $('log').appendChild(d)
-  $('log').scrollTop = $('log').scrollHeight
-}
 function setStatus(text, ok) {
   $('status').textContent = text
   $('status').className = ok ? 'ok' : 'wait'
 }
 
-// 二维码 = 当前网址（含房间号）
+// ---------- 二维码 ----------
 if (isHost) {
   $('link').value = location.href
   try {
@@ -105,36 +135,157 @@ if (isHost) {
   $('hostBox').hidden = true
 }
 
+// ---------- 公平出拳：先提交哈希，双方都提交后再揭晓 ----------
+async function sha(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ---------- 游戏状态 ----------
+let opp = null                 // 对手的 peerId
+const peers = new Set()
+let round = 1
+let score = {me: 0, them: 0, draw: 0}
+let mine = null                // {round, choice, nonce, hash, revealed}
+let picking = false
+let resolving = false
+let nextTimer = null
+const theirCommit = {}         // round -> hash
+const theirReveal = {}         // round -> choice
+
+function resetGame() {
+  clearTimeout(nextTimer)
+  round = 1; score = {me: 0, them: 0, draw: 0}
+  mine = null; picking = false; resolving = false
+  for (const k in theirCommit) delete theirCommit[k]
+  for (const k in theirReveal) delete theirReveal[k]
+  render()
+}
+
+function render() {
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('sDraw').textContent = score.draw
+  $('round').textContent = `第 ${round} 局`
+
+  const connected = !!opp
+  const canPick = connected && !mine && !picking && !resolving
+  document.querySelectorAll('#choices button').forEach(b => {
+    b.disabled = !canPick
+    b.classList.toggle('sel', !!mine && mine.choice === b.dataset.c)
+  })
+
+  if (!resolving) {
+    $('hMe').textContent = mine ? '✅' : '❔'
+    $('hThem').textContent = (round in theirCommit) ? '✅' : '❔'
+    $('result').textContent = ''
+    $('result').className = ''
+  }
+  if (!connected) $('hint').textContent = isHost ? '等对方扫码加入…' : '正在寻找房主…'
+  else if (resolving) $('hint').textContent = ''
+  else if (!mine) $('hint').textContent = (round in theirCommit) ? '对方已出手，轮到你了' : '请出拳'
+  else $('hint').textContent = '已出拳，等对方出手…'
+
+  $('hostBox').hidden = !isHost || peers.size > 0
+}
+
+function refreshStatus() {
+  if (peers.size > 1) setStatus('⚠️ 房间里人数超过 2 人，只和第一位对手对战', false)
+  else if (opp) setStatus('✅ 已连接，开始对战', true)
+  else setStatus(isHost ? '等待对方扫码加入…' : '正在寻找房主…', false)
+}
+
 try {
   const {joinRoom} = await import(STRATEGY_URL[strategy] || STRATEGY_URL.nostr)
-  // password 会让数据在两端之间加密；appId 请改成你自己游戏的唯一名字
+  // password 会让数据在两端之间加密；appId 可以改成你自己游戏的唯一名字
   const room = joinRoom({appId: 'chai-lan-games-demo', password: roomId}, roomId)
-  const [sendChat, onChat] = room.makeAction('chat')
+  const [sendCommit, onCommit] = room.makeAction('commit')
+  const [sendReveal, onReveal] = room.makeAction('reveal')
 
-  const peers = new Set()
-  const refresh = () => {
-    if (peers.size) setStatus(`✅ 已连接（${peers.size} 位对手）`, true)
-    else setStatus(isHost ? '等待对方扫码加入…' : '正在寻找房主…', false)
-  }
-  refresh()
   $('detail').textContent = `房间 ${roomId} · 信令通道：${strategy}`
 
   room.onPeerJoin(async id => {
-    peers.add(id); refresh()
-    log('有人加入了', 'sys')
+    peers.add(id)
+    if (!opp) { opp = id; resetGame() }
+    refreshStatus(); render()
     try { const ms = await room.ping(id); $('detail').textContent = `房间 ${roomId} · 延迟约 ${Math.round(ms)} ms` } catch {}
   })
-  room.onPeerLeave(id => { peers.delete(id); refresh(); log('对方离开了', 'sys') })
-  onChat((text, id) => log('对方：' + text))
+  room.onPeerLeave(id => {
+    peers.delete(id)
+    if (id === opp) {
+      opp = peers.values().next().value || null
+      resetGame()
+    }
+    refreshStatus(); render()
+  })
 
-  $('form').onsubmit = e => {
-    e.preventDefault()
-    const t = $('msg').value.trim()
-    if (!t) return
-    sendChat(t)
-    log('我：' + t, 'me')
-    $('msg').value = ''
+  onCommit((d, id) => {
+    if (id !== opp || !d || typeof d.hash !== 'string') return
+    theirCommit[d.round] = d.hash
+    render()
+    tryReveal()
+  })
+
+  onReveal(async (d, id) => {
+    if (id !== opp || !d || !(d.choice in BEATS)) return
+    const c = theirCommit[d.round]
+    if (!c) return
+    if (await sha(`${d.round}|${d.choice}|${d.nonce}`) !== c) {
+      $('hint').textContent = '⚠️ 对方的出拳校验失败'
+      return
+    }
+    theirReveal[d.round] = d.choice
+    tryResolve()
+  })
+
+  async function pick(choice) {
+    if (!opp || mine || picking || resolving) return
+    picking = true; render()
+    const nonce = crypto.randomUUID()
+    const hash = await sha(`${round}|${choice}|${nonce}`)
+    mine = {round, choice, nonce, hash, revealed: false}
+    picking = false
+    sendCommit({round, hash}, opp)
+    render()
+    tryReveal()
   }
+
+  // 双方都提交了哈希，才公开自己的出拳
+  function tryReveal() {
+    if (!mine || mine.revealed || !(mine.round in theirCommit)) return
+    mine.revealed = true
+    sendReveal({round: mine.round, choice: mine.choice, nonce: mine.nonce}, opp)
+    tryResolve()
+  }
+
+  function tryResolve() {
+    if (!mine || !mine.revealed || resolving || !(round in theirReveal)) return
+    resolving = true
+    const me = mine.choice, them = theirReveal[round]
+    let cls, text
+    if (me === them) { score.draw++; cls = 'draw'; text = '平局' }
+    else if (BEATS[me] === them) { score.me++; cls = 'win'; text = '你赢了 🎉' }
+    else { score.them++; cls = 'lose'; text = '你输了' }
+    $('hMe').textContent = ICON[me]
+    $('hThem').textContent = ICON[them]
+    $('result').textContent = text
+    $('result').className = cls
+    $('hint').textContent = `你出${NAME[me]}，对方出${NAME[them]}。马上开始下一局…`
+    $('sMe').textContent = score.me
+    $('sThem').textContent = score.them
+    $('sDraw').textContent = score.draw
+    nextTimer = setTimeout(nextRound, 2500)
+  }
+
+  function nextRound() {
+    delete theirCommit[round]; delete theirReveal[round]
+    round++
+    mine = null; resolving = false
+    render()
+  }
+
+  document.querySelectorAll('#choices button').forEach(b => b.onclick = () => pick(b.dataset.c))
+  refreshStatus(); render()
 } catch (err) {
   setStatus('❌ 加载联机库失败', false)
   $('detail').textContent = '请检查网络，或在网址后加 ?s=torrent 换一个信令通道再试。' + err
