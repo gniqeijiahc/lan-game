@@ -12,6 +12,7 @@ shared/
   style.css         共用样式
 games/
   rps/index.html    剪刀石头布
+  connect-four/index.html    四子棋
 ```
 
 ## 新增一个游戏
