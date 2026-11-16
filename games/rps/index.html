@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>剪刀石头布</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  .score { display:flex; justify-content:space-around; text-align:center; }
+  .score b { display:block; font-size:28px; line-height:1.2; }
+  .score span { font-size:13px; color:var(--muted); }
+  .round { text-align:center; color:var(--muted); font-size:14px; margin-bottom:8px; }
+
+  #arena { display:flex; align-items:center; justify-content:space-around; min-height:110px; margin:10px 0; }
+  .hand { text-align:center; }
+  .hand .big { font-size:64px; line-height:1.1; }
+  .hand .who { font-size:13px; color:var(--muted); }
+  .vs { color:var(--muted); font-weight:600; }
+  #result { text-align:center; font-size:22px; font-weight:700; min-height:34px; }
+  #result.win { color:var(--ok); } #result.lose { color:var(--bad); } #result.draw { color:var(--warn); }
+  #hint { text-align:center; color:var(--muted); font-size:14px; min-height:22px; margin-bottom:6px; }
+
+  #choices { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  #choices button { padding:14px 0; border:2px solid var(--line); border-radius:14px; background:var(--card); color:var(--text); font:inherit; cursor:pointer; }
+  #choices button .e { display:block; font-size:42px; line-height:1.2; }
+  #choices button .n { font-size:14px; color:var(--muted); }
+  #choices button.sel { border-color:var(--accent); background:rgba(47,111,237,.1); }
+  #choices button:disabled { opacity:.45; cursor:not-allowed; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>✊✌️✋ 剪刀石头布</h1>
+
+  <div id="lobby"></div>
+
+  <div class="card" id="game">
+    <div class="score">
+      <div><b id="sMe">0</b><span>我</span></div>
+      <div><b id="sDraw">0</b><span>平局</span></div>
+      <div><b id="sThem">0</b><span>对方</span></div>
+    </div>
+    <div class="round" id="round">第 1 局</div>
+
+    <div id="arena">
+      <div class="hand"><div class="big" id="hMe">❔</div><div class="who">我</div></div>
+      <div class="vs">VS</div>
+      <div class="hand"><div class="big" id="hThem">❔</div><div class="who">对方</div></div>
+    </div>
+    <div id="result"></div>
+    <div id="hint"></div>
+
+    <div id="choices">
+      <button data-c="rock"><span class="e">✊</span><span class="n">石头</span></button>
+      <button data-c="scissors"><span class="e">✌️</span><span class="n">剪刀</span></button>
+      <button data-c="paper"><span class="e">✋</span><span class="n">布</span></button>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import {createLobby} from '../../shared/lobby.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+const BEATS = {rock: 'scissors', scissors: 'paper', paper: 'rock'}
+const ICON  = {rock: '✊', scissors: '✌️', paper: '✋'}
+const NAME  = {rock: '石头', scissors: '剪刀', paper: '布'}
+
+// ---------- 公平出拳：先提交哈希，双方都提交后再揭晓 ----------
+async function sha(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ---------- 游戏状态（两边各自独立运行同一套逻辑，没有"主机"） ----------
+let opp = null                 // 对手的 peerId
+let round = 1
+let score = {me: 0, them: 0, draw: 0}
+let mine = null                // {round, choice, nonce, hash, revealed}
+let picking = false
+let resolving = false
+let nextTimer = null
+const theirCommit = {}         // round -> hash
+const theirReveal = {}         // round -> choice
+
+let commitAct = null, revealAct = null
+const sendCommit = d => commitAct && commitAct.send(d).catch(() => {})
+const sendReveal = d => revealAct && revealAct.send(d).catch(() => {})
+
+function resetGame() {
+  clearTimeout(nextTimer)
+  round = 1; score = {me: 0, them: 0, draw: 0}
+  mine = null; picking = false; resolving = false
+  for (const k in theirCommit) delete theirCommit[k]
+  for (const k in theirReveal) delete theirReveal[k]
+  render()
+}
+
+function render() {
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('sDraw').textContent = score.draw
+  $('round').textContent = `第 ${round} 局`
+
+  const canPick = !!opp && !mine && !picking && !resolving
+  document.querySelectorAll('#choices button').forEach(b => {
+    b.disabled = !canPick
+    b.classList.toggle('sel', !!mine && mine.choice === b.dataset.c)
+  })
+
+  if (!resolving) {
+    $('hMe').textContent = mine ? '✅' : '❔'
+    $('hThem').textContent = (round in theirCommit) ? '✅' : '❔'
+    $('result').textContent = ''
+    $('result').className = ''
+  }
+  if (!opp) $('hint').textContent = '等对方加入…'
+  else if (resolving) $('hint').textContent = ''
+  else if (!mine) $('hint').textContent = (round in theirCommit) ? '对方已出手，轮到你了' : '请出拳'
+  else $('hint').textContent = '已出拳，等对方出手…'
+}
+
+async function pick(choice) {
+  if (!opp || mine || picking || resolving) return
+  picking = true; render()
+  const nonce = crypto.randomUUID()
+  const hash = await sha(`${round}|${choice}|${nonce}`)
+  mine = {round, choice, nonce, hash, revealed: false}
+  picking = false
+  sendCommit({round, hash})
+  render()
+  tryReveal()
+}
+
+// 双方都提交了哈希，才公开自己的出拳
+function tryReveal() {
+  if (!mine || mine.revealed || !(mine.round in theirCommit)) return
+  mine.revealed = true
+  sendReveal({round: mine.round, choice: mine.choice, nonce: mine.nonce})
+  tryResolve()
+}
+
+function tryResolve() {
+  if (!mine || !mine.revealed || resolving || !(round in theirReveal)) return
+  resolving = true
+  const me = mine.choice, them = theirReveal[round]
+  let cls, text
+  if (me === them) { score.draw++; cls = 'draw'; text = '平局' }
+  else if (BEATS[me] === them) { score.me++; cls = 'win'; text = '你赢了 🎉' }
+  else { score.them++; cls = 'lose'; text = '你输了' }
+  $('hMe').textContent = ICON[me]
+  $('hThem').textContent = ICON[them]
+  $('result').textContent = text
+  $('result').className = cls
+  $('hint').textContent = `你出${NAME[me]}，对方出${NAME[them]}。马上开始下一局…`
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('sDraw').textContent = score.draw
+  nextTimer = setTimeout(nextRound, 2500)
+}
+
+function nextRound() {
+  delete theirCommit[round]; delete theirReveal[round]
+  round++
+  mine = null; resolving = false
+  render()
+}
+
+document.querySelectorAll('#choices button').forEach(b => b.onclick = () => pick(b.dataset.c))
+render()
+
+await createLobby({
+  gameId: 'rps',
+  container: $('lobby'),
+  setup(room) {
+    commitAct = room.makeAction('commit')
+    revealAct = room.makeAction('reveal')
+
+    commitAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || typeof d.hash !== 'string') return
+      theirCommit[d.round] = d.hash
+      render()
+      tryReveal()
+    })
+
+    revealAct.onMessage(async (d, {peerId}) => {
+      if (peerId !== opp || !d || !(d.choice in BEATS)) return
+      const c = theirCommit[d.round]
+      if (!c) return
+      if (await sha(`${d.round}|${d.choice}|${d.nonce}`) !== c) {
+        $('hint').textContent = '⚠️ 对方的出拳校验失败'
+        return
+      }
+      theirReveal[d.round] = d.choice
+      tryResolve()
+    })
+  },
+  onOpponentJoin(id) { opp = id; resetGame() },
+  onOpponentLeave() { opp = null; resetGame() }
+})
+</script>
+</body>
+</html>
