@@ -93,9 +93,9 @@ const $ = id => document.getElementById(id)
 const params = new URLSearchParams(location.search)
 const strategy = params.get('s') || 'nostr'   // 可选: nostr(默认) / torrent / mqtt
 const STRATEGY_URL = {
-  nostr:   'https://esm.run/trystero',
-  torrent: 'https://esm.run/@trystero-p2p/torrent',
-  mqtt:    'https://esm.run/@trystero-p2p/mqtt'
+  nostr:   'https://esm.run/trystero@0.27.0',
+  torrent: 'https://esm.run/@trystero-p2p/torrent@0.27.0',
+  mqtt:    'https://esm.run/@trystero-p2p/mqtt@0.27.0'
 }
 
 const BEATS = {rock: 'scissors', scissors: 'paper', paper: 'rock'}
@@ -199,18 +199,20 @@ try {
   const {joinRoom} = await import(STRATEGY_URL[strategy] || STRATEGY_URL.nostr)
   // password 会让数据在两端之间加密；appId 可以改成你自己游戏的唯一名字
   const room = joinRoom({appId: 'chai-lan-games-demo', password: roomId}, roomId)
-  const [sendCommit, onCommit] = room.makeAction('commit')
-  const [sendReveal, onReveal] = room.makeAction('reveal')
+  const commitAct = room.makeAction('commit')
+  const revealAct = room.makeAction('reveal')
+  const sendCommit = d => commitAct.send(d).catch(() => {})
+  const sendReveal = d => revealAct.send(d).catch(() => {})
 
   $('detail').textContent = `房间 ${roomId} · 信令通道：${strategy}`
 
-  room.onPeerJoin(async id => {
+  room.onPeerJoin(async ({peerId: id}) => {
     peers.add(id)
     if (!opp) { opp = id; resetGame() }
     refreshStatus(); render()
     try { const ms = await room.ping(id); $('detail').textContent = `房间 ${roomId} · 延迟约 ${Math.round(ms)} ms` } catch {}
   })
-  room.onPeerLeave(id => {
+  room.onPeerLeave(({peerId: id}) => {
     peers.delete(id)
     if (id === opp) {
       opp = peers.values().next().value || null
@@ -219,14 +221,14 @@ try {
     refreshStatus(); render()
   })
 
-  onCommit((d, id) => {
+  commitAct.onMessage((d, {peerId: id}) => {
     if (id !== opp || !d || typeof d.hash !== 'string') return
     theirCommit[d.round] = d.hash
     render()
     tryReveal()
   })
 
-  onReveal(async (d, id) => {
+  revealAct.onMessage(async (d, {peerId: id}) => {
     if (id !== opp || !d || !(d.choice in BEATS)) return
     const c = theirCommit[d.round]
     if (!c) return
@@ -245,7 +247,7 @@ try {
     const hash = await sha(`${round}|${choice}|${nonce}`)
     mine = {round, choice, nonce, hash, revealed: false}
     picking = false
-    sendCommit({round, hash}, opp)
+    sendCommit({round, hash})
     render()
     tryReveal()
   }
@@ -254,7 +256,7 @@ try {
   function tryReveal() {
     if (!mine || mine.revealed || !(mine.round in theirCommit)) return
     mine.revealed = true
-    sendReveal({round: mine.round, choice: mine.choice, nonce: mine.nonce}, opp)
+    sendReveal({round: mine.round, choice: mine.choice, nonce: mine.nonce})
     tryResolve()
   }
 
