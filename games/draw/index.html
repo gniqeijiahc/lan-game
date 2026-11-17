@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>你画我猜</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  .score { display:flex; justify-content:space-around; text-align:center; align-items:center; }
+  .score b { display:block; font-size:28px; line-height:1.2; }
+  .score span { font-size:13px; color:var(--muted); }
+  .score .mid { font-size:14px; color:var(--muted); }
+  .score .mid strong { display:block; color:var(--text); font-size:15px; }
+
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin:10px 0 2px; }
+  .bar i { display:block; height:100%; width:100%; background:var(--accent); transition:width .25s linear; }
+  .bar.low i { background:var(--bad); }
+  #timeTxt { text-align:right; font-size:12px; color:var(--muted); }
+
+  #banner { text-align:center; font-size:18px; font-weight:700; margin:12px 0 4px; min-height:28px; }
+  #banner .word { color:var(--accent); font-size:24px; }
+  #banner.ok { color:var(--ok); } #banner.bad { color:var(--warn); }
+  #sub { text-align:center; color:var(--muted); font-size:14px; min-height:21px; margin-bottom:8px; }
+
+  #cv { width:100%; aspect-ratio:4/3; height:auto; display:block; background:#fff;
+    border:1px solid var(--line); border-radius:10px; touch-action:none; }
+  #cv.can { cursor:crosshair; }
+
+  #tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+  .sw { width:30px; height:30px; border-radius:50%; border:3px solid transparent; padding:0; cursor:pointer;
+    box-shadow:0 0 0 1px var(--line); }
+  .sw.sel { border-color:var(--accent); }
+  .sz { width:34px; height:34px; border-radius:10px; border:2px solid var(--line); background:var(--card);
+    display:flex; align-items:center; justify-content:center; padding:0; cursor:pointer; }
+  .sz i { display:block; border-radius:50%; background:var(--text); }
+  .sz.sel { border-color:var(--accent); }
+  .tb { padding:6px 12px; border:2px solid var(--line); border-radius:10px; background:var(--card);
+    color:var(--text); font:inherit; font-size:14px; cursor:pointer; }
+  .tb.sel { border-color:var(--accent); background:rgba(47,111,237,.1); }
+  .tb.danger { color:var(--bad); }
+  .sep { flex-basis:100%; height:0; }
+
+  #gform { display:flex; gap:8px; margin-top:12px; }
+  #gform input { flex:1; min-width:0; padding:12px; border:1px solid var(--line); border-radius:10px;
+    background:transparent; color:var(--text); font:inherit; font-size:17px; }
+  #gform button { padding:12px 18px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+
+  #guesses { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .chip { padding:2px 10px; border-radius:999px; font-size:14px; background:var(--line); }
+  .chip.me { background:rgba(47,111,237,.15); color:var(--accent); }
+
+  #pick { display:grid; gap:10px; margin-top:6px; }
+  .wbtn { display:flex; justify-content:space-between; align-items:center; padding:14px 16px;
+    border:2px solid var(--line); border-radius:14px; background:var(--card); color:var(--text); font:inherit; cursor:pointer; }
+  .wbtn b { font-size:20px; } .wbtn span { color:var(--muted); font-size:13px; }
+  .wbtn:active { border-color:var(--accent); }
+  #reroll { background:none; border:0; color:var(--muted); font:inherit; font-size:14px; padding:6px; cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>🎨 你画我猜</h1>
+
+  <div id="lobby"></div>
+
+  <div class="card" id="game">
+    <div class="score">
+      <div><b id="sMe">0</b><span>我</span></div>
+      <div class="mid"><strong id="roundTxt">第 1 局</strong><span id="roleTxt"></span></div>
+      <div><b id="sThem">0</b><span>对方</span></div>
+    </div>
+
+    <div id="timer" hidden>
+      <div class="bar" id="bar"><i id="barFill"></i></div>
+      <div id="timeTxt"></div>
+    </div>
+
+    <div id="banner">等对方加入…</div>
+    <div id="sub"></div>
+
+    <div id="pick" hidden></div>
+
+    <div id="stage" hidden>
+      <canvas id="cv"></canvas>
+      <div id="tools" hidden></div>
+      <form id="gform" autocomplete="off" hidden>
+        <input type="text" id="gin" placeholder="输入你的答案" maxlength="20" enterkeyhint="send">
+        <button type="submit">猜</button>
+      </form>
+      <div id="guesses"></div>
+    </div>
+  </div>
+  <div class="muted">轮流画和猜：画的人从 3 个词里选一个，限时 90 秒，不能写字。猜对双方都得分，越快越高。</div>
+</main>
+
+<script type="module">
+import {createLobby} from '../../shared/lobby.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+// ================= 词库（'|' 后面是同义答案） =================
+const WORDS = {
+  动物: ['猫','狗','兔子','大象','长颈鹿','乌龟','青蛙','蝴蝶','蜗牛','螃蟹','企鹅','老鹰','猴子','熊猫','老虎',
+         '鲨鱼','章鱼','蜘蛛','蜜蜂','鸭子','公鸡','猪','老鼠','蛇','蝙蝠','骆驼','海豚','鳄鱼','毛毛虫','恐龙','蚊子','马'],
+  食物: ['苹果','香蕉','西瓜','榴莲','芒果','荔枝','冰淇淋|雪糕','汉堡','披萨','面条','饺子','包子','鸡蛋','蛋糕',
+         '棒棒糖','爆米花','椰子','玉米','辣椒','巧克力','薯条','粽子','月饼','寿司','珍珠奶茶|奶茶','西红柿|番茄','胡萝卜','面包'],
+  物品: ['雨伞','眼镜','手机','电脑|计算机','铅笔','书包','钥匙','剪刀','时钟|钟','灯泡','牙刷','椅子','风扇','冷气机|空调',
+         '电视','吉他','帽子','鞋子','自行车|脚踏车','摩托车','飞机','火车','轮船|船','汽车','气球','望远镜','相机','杯子',
+         '筷子','梯子','锤子','口罩','皮球','钱包','蜡烛','镜子','耳机','闹钟'],
+  地点: ['学校','医院','图书馆','双子塔','金字塔','长城','房子','桥','灯塔','城堡','帐篷','游乐场','加油站','篮球场','操场','电梯'],
+  自然: ['太阳','月亮','彩虹','闪电','火山','瀑布','海浪','星星','云','下雨','雪人','仙人掌','向日葵','树','玫瑰花','蘑菇','岛屿','龙卷风'],
+  动作: ['跑步','游泳','跳绳','刷牙','睡觉','钓鱼','骑马','唱歌','跳舞','打喷嚏','哭','洗澡','打电话','拔河','射箭','爬山',
+         '踢足球','打篮球','打羽毛球','拍照','接力赛','跳远','铅球','打乒乓球'],
+  角色: ['老师','医生','警察','消防员','厨师','宇航员','海盗','超人','小丑','机器人','公主','巫婆','幽灵|鬼','外星人','忍者','国王']
+}
+const ALL = []
+for (const [cat, list] of Object.entries(WORDS)) for (const s of list) {
+  const [text, ...alts] = s.split('|')
+  ALL.push({text, alts, cat})
+}
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
+const used = new Set()
+function pickCandidates() {
+  let pool = ALL.filter(w => !used.has(w.text))
+  if (pool.length < 3) { used.clear(); pool = ALL.slice() }
+  const out = [], cats = new Set(), rest = []
+  for (const w of shuffle(pool)) {
+    if (out.length < 3 && !cats.has(w.cat)) { out.push(w); cats.add(w.cat) } else rest.push(w)
+  }
+  while (out.length < 3) out.push(rest.shift())
+  return out
+}
+
+// ================= 状态 =================
+const DUR = 90                    // 每局秒数
+const W = 800, H = 600            // 画布逻辑尺寸（两边一致，坐标按它传）
+let opp = null, ctlAct = null, drawAct = null
+
+let myRoll = Math.random(), theirRoll = null
+let started = false, firstDrawer = false
+let round = 0, role = null        // role: 'draw' | 'guess'
+let phase = 'wait'                // wait | pair | pick | draw | result
+let score = {me: 0, them: 0}
+let word = null                   // 只有画的人知道 {text, alts, cat}
+let info = {len: 0, cat: '', ch: null}
+let result = null
+let endsAt = 0, hintSent = false
+let candidates = []
+let guesses = []
+let tickId = null, nextTimer = null
+
+const sendCtl  = d => ctlAct  && ctlAct.send(d).catch(() => {})
+const sendDraw = d => drawAct && drawAct.send({r: round, ...d}).catch(() => {})
+const roleOf = r => ((r % 2 === 1) === firstDrawer) ? 'draw' : 'guess'
+
+// ================= 画布 =================
+const cv = $('cv'), ctx = cv.getContext('2d')
+cv.width = W; cv.height = H
+let strokes = [], cur = null, pending = [], flushT = null
+const tool = {color: '#1d2433', size: 6, eraser: false}
+
+function clearCanvas() { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H) }
+function drawStroke(s, fromPt) {            // 从第 fromPt 个点开始补画
+  if (fromPt === 0) { ctx.fillStyle = s.c; ctx.beginPath(); ctx.arc(s.p[0], s.p[1], s.w / 2, 0, Math.PI * 2); ctx.fill() }
+  const n = s.p.length / 2
+  if (n - 1 <= fromPt) return
+  ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+  ctx.beginPath(); ctx.moveTo(s.p[fromPt * 2], s.p[fromPt * 2 + 1])
+  for (let k = fromPt + 1; k < n; k++) ctx.lineTo(s.p[k * 2], s.p[k * 2 + 1])
+  ctx.stroke()
+}
+function redraw() { clearCanvas(); strokes.forEach(s => drawStroke(s, 0)) }
+function resetCanvas() { strokes = []; cur = null; pending = []; clearTimeout(flushT); flushT = null; clearCanvas() }
+
+const canDraw = () => role === 'draw' && phase === 'draw'
+const pos = e => { const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) * W / r.width), Math.round((e.clientY - r.top) * H / r.height)] }
+function flush() { flushT = null; if (pending.length) { sendDraw({k: 'p', p: pending}); pending = [] } }
+
+cv.addEventListener('pointerdown', e => {
+  if (!canDraw() || cur) return
+  e.preventDefault(); cv.setPointerCapture(e.pointerId)
+  const [x, y] = pos(e)
+  cur = {c: tool.eraser ? '#ffffff' : tool.color, w: tool.eraser ? tool.size * 2.5 : tool.size, p: [x, y]}
+  strokes.push(cur); drawStroke(cur, 0)
+  sendDraw({k: 's', c: cur.c, w: cur.w, x, y})
+})
+cv.addEventListener('pointermove', e => {
+  if (!cur) return
+  e.preventDefault()
+  const [x, y] = pos(e), n = cur.p.length / 2
+  if (Math.abs(x - cur.p[cur.p.length - 2]) + Math.abs(y - cur.p[cur.p.length - 1]) < 2) return
+  cur.p.push(x, y); drawStroke(cur, n - 1)
+  pending.push(x, y)
+  if (!flushT) flushT = setTimeout(flush, 40)
+})
+const endStroke = () => { if (!cur) return; clearTimeout(flushT); flush(); cur = null }
+cv.addEventListener('pointerup', endStroke)
+cv.addEventListener('pointercancel', endStroke)
+
+// ================= 工具栏 =================
+const COLORS = ['#1d2433', '#d6453d', '#f59e0b', '#1a9b52', '#2f6fed', '#8b5cf6', '#8b5a2b']
+const SIZES = [{s: 4, d: 6}, {s: 10, d: 12}, {s: 22, d: 20}]
+function buildTools() {
+  const box = $('tools')
+  box.innerHTML = ''
+  COLORS.forEach(c => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'sw'; b.style.background = c; b.dataset.c = c
+    b.onclick = () => { tool.color = c; tool.eraser = false; syncTools() }
+    box.appendChild(b)
+  })
+  const sep = document.createElement('div'); sep.className = 'sep'; box.appendChild(sep)
+  SIZES.forEach(z => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'sz'; b.dataset.s = z.s
+    b.innerHTML = `<i style="width:${z.d}px;height:${z.d}px"></i>`
+    b.onclick = () => { tool.size = z.s; syncTools() }
+    box.appendChild(b)
+  })
+  const mk = (text, cls, fn, id) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'tb ' + cls; b.textContent = text; b.onclick = fn
+    if (id) b.id = id; box.appendChild(b)
+  }
+  mk('🧽 橡皮', '', () => { tool.eraser = !tool.eraser; syncTools() }, 'bEraser')
+  mk('↩️ 撤销', '', () => { if (!canDraw() || cur) return; strokes.pop(); redraw(); sendDraw({k: 'u'}) })
+  mk('🗑 清空', '', () => { if (!canDraw() || cur) return; strokes = []; redraw(); sendDraw({k: 'c'}) })
+  mk('放弃这题', 'danger', () => { if (canDraw()) finishRound(false, 'giveup') })
+  syncTools()
+}
+function syncTools() {
+  document.querySelectorAll('#tools .sw').forEach(b => b.classList.toggle('sel', !tool.eraser && b.dataset.c === tool.color))
+  document.querySelectorAll('#tools .sz').forEach(b => b.classList.toggle('sel', +b.dataset.s === tool.size))
+  $('bEraser').classList.toggle('sel', tool.eraser)
+}
+buildTools()
+
+// ================= 流程 =================
+function stopTick() { clearInterval(tickId); tickId = null }
+function resetGame() {
+  clearTimeout(nextTimer); stopTick()
+  started = false; theirRoll = null; myRoll = Math.random()
+  round = 0; role = null; phase = opp ? 'pair' : 'wait'
+  score = {me: 0, them: 0}; word = null; result = null; guesses = []; candidates = []
+  used.clear(); resetCanvas(); render()
+}
+
+function sendHello(ack) { sendCtl({t: 'hello', r: myRoll, ack}) }
+function tryStart() {
+  if (started || theirRoll == null) return
+  if (theirRoll === myRoll) { myRoll = Math.random(); theirRoll = null; sendHello(false); return }   // 几乎不会发生
+  started = true
+  firstDrawer = myRoll > theirRoll        // 随机数大的先画，两边各自算出一致的结果
+  enterRound(1)
+}
+
+function enterRound(r) {
+  clearTimeout(nextTimer); stopTick()
+  round = r; role = roleOf(r); phase = 'pick'
+  word = null; result = null; guesses = []; hintSent = false
+  info = {len: 0, cat: '', ch: null}
+  resetCanvas()
+  candidates = role === 'draw' ? pickCandidates() : []
+  render()
+}
+
+function chooseWord(i) {
+  if (role !== 'draw' || phase !== 'pick' || !candidates[i]) return
+  word = candidates[i]; used.add(word.text)
+  endsAt = Date.now() + DUR * 1000
+  phase = 'draw'
+  sendCtl({t: 'round', r: round, len: word.text.length, cat: word.cat, dur: DUR})
+  startTick(); render()
+}
+
+function startTick() { stopTick(); tickId = setInterval(tick, 250); tick() }
+function tick() {
+  if (phase !== 'draw') return
+  const total = DUR * 1000, leftMs = Math.max(0, endsAt - Date.now()), left = Math.ceil(leftMs / 1000)
+  $('barFill').style.width = (leftMs / total * 100) + '%'
+  $('bar').classList.toggle('low', left <= 15)
+  $('timeTxt').textContent = `剩余 ${left} 秒`
+  if (role === 'draw') {
+    if (!hintSent && leftMs <= total / 2) { hintSent = true; sendCtl({t: 'hint', r: round, ch: word.text[0]}) }
+    if (leftMs === 0) finishRound(false, 'timeout')
+  } else if (Date.now() > endsAt + 5000) {
+    applyEnd({r: round, ok: false, why: 'timeout', word: '?', g: 0, d: 0})   // 兜底：对方的结束消息丢了
+  }
+}
+
+const norm = s => String(s).toLowerCase().replace(/[\s\u3000，。,.!！?？、~～·'"“”‘’]/g, '')
+const isRight = text => [word.text, ...word.alts].map(norm).includes(norm(text))
+
+// 画的人是权威：由他判定对错、结束本局
+function finishRound(ok, why) {
+  if (role !== 'draw' || phase !== 'draw') return
+  const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))
+  const msg = {t: 'end', r: round, ok, why, word: word.text, g: ok ? 10 + Math.floor(left / 10) : 0, d: ok ? 5 : 0}
+  sendCtl(msg); applyEnd(msg)
+}
+function applyEnd(d) {
+  if (phase !== 'draw') return
+  stopTick(); endStroke()
+  phase = 'result'
+  if (role === 'guess') { score.me += d.g; score.them += d.d } else { score.me += d.d; score.them += d.g }
+  result = {ok: d.ok, why: d.why, word: d.word, g: d.g, d: d.d}
+  render()
+  nextTimer = setTimeout(() => enterRound(round + 1), 4000)
+}
+
+// ================= 渲染 =================
+function render() {
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('roundTxt').textContent = round ? `第 ${round} 局` : '准备中'
+  $('roleTxt').textContent = !round ? '' : role === 'draw' ? '🖌️ 你来画' : '🤔 你来猜'
+
+  const banner = $('banner'), sub = $('sub')
+  banner.className = ''; sub.textContent = ''
+  const pickBox = $('pick')
+  pickBox.hidden = !(phase === 'pick' && role === 'draw')
+  $('stage').hidden = !(phase === 'draw' || phase === 'result')
+  $('timer').hidden = phase !== 'draw'
+  $('tools').hidden = !canDraw()
+  $('gform').hidden = !(role === 'guess' && phase === 'draw')
+  cv.classList.toggle('can', canDraw())
+
+  if (phase === 'wait') banner.textContent = '等对方加入…'
+  else if (phase === 'pair') banner.textContent = '正在分配角色…'
+  else if (phase === 'pick') {
+    if (role === 'draw') {
+      banner.textContent = '选一个词来画'
+      sub.textContent = '对方看不到这几个词'
+      pickBox.innerHTML = ''
+      candidates.forEach((w, i) => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'wbtn'
+        const n = document.createElement('b'); n.textContent = w.text
+        const c = document.createElement('span'); c.textContent = w.cat
+        b.append(n, c); b.onclick = () => chooseWord(i); pickBox.appendChild(b)
+      })
+      const rr = document.createElement('button'); rr.type = 'button'; rr.id = 'reroll'; rr.textContent = '🔄 换一批'
+      rr.onclick = () => { candidates = pickCandidates(); render() }
+      pickBox.appendChild(rr)
+    } else {
+      banner.textContent = '对方正在选词…'
+      sub.textContent = '准备好猜吧'
+    }
+  } else if (phase === 'draw') {
+    if (role === 'draw') {
+      banner.innerHTML = '请画：<span class="word"></span>'
+      banner.querySelector('.word').textContent = word.text
+      sub.textContent = `类别：${word.cat} · 不要写字哦`
+    } else {
+      const chars = Array.from({length: info.len}, (_, i) => (i === 0 && info.ch) ? info.ch : '＿')
+      banner.textContent = chars.join(' ')
+      sub.textContent = `${info.len} 个字 · 类别：${info.cat}` + (info.ch ? ' · 已提示首字' : '')
+    }
+  } else if (phase === 'result') {
+    const gain = role === 'guess' ? result.g : result.d
+    if (result.ok) {
+      banner.className = 'ok'
+      banner.textContent = `✅ 答对了！答案：${result.word}`
+      sub.textContent = `你 +${gain} 分，马上轮到${role === 'draw' ? '你猜' : '你画'}…`
+    } else {
+      banner.className = 'bad'
+      banner.textContent = (result.why === 'giveup' ? '这题放弃了' : '⏰ 时间到') + `，答案：${result.word}`
+      sub.textContent = `马上轮到${role === 'draw' ? '你猜' : '你画'}…`
+    }
+  }
+  renderGuesses()
+}
+function renderGuesses() {
+  const box = $('guesses'); box.innerHTML = ''
+  for (const g of guesses) {
+    const s = document.createElement('span'); s.className = 'chip' + (g.who === 'me' ? ' me' : '')
+    s.textContent = (g.who === 'me' ? '我：' : '对方：') + g.text
+    box.appendChild(s)
+  }
+}
+
+$('gform').addEventListener('submit', e => {
+  e.preventDefault()
+  const text = $('gin').value.trim().slice(0, 20)
+  $('gin').value = ''
+  if (!text || role !== 'guess' || phase !== 'draw') return
+  guesses.push({who: 'me', text}); renderGuesses()
+  sendCtl({t: 'guess', r: round, text})
+})
+
+render()
+
+// ================= 联机 =================
+const safeColor = c => /^#[0-9a-f]{3,8}$/i.test(c) ? c : '#000000'
+const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? +v : lo))
+
+await createLobby({
+  gameId: 'draw',
+  container: $('lobby'),
+  setup(room) {
+    ctlAct = room.makeAction('ctl')
+    drawAct = room.makeAction('draw')
+
+    ctlAct.onMessage((d, {peerId}) => {
+      if (!d || typeof d !== 'object') return
+      if (opp === null) opp = peerId          // 对方的消息比"加入"事件先到时的兜底
+      if (peerId !== opp) return
+      switch (d.t) {
+        case 'hello':
+          if (typeof d.r !== 'number') return
+          theirRoll = d.r
+          if (!d.ack) sendHello(true)
+          tryStart()
+          break
+        case 'round':   // 对方选好词，开始画
+          if (!started || phase === 'draw' && d.r === round) return
+          if (!(d.r >= round) || roleOf(d.r) !== 'guess') return
+          if (d.r > round || phase !== 'pick') enterRound(d.r)
+          info = {len: num(d.len, 1, 20), cat: String(d.cat || '').slice(0, 10), ch: null}
+          endsAt = Date.now() + num(d.dur, 10, 300) * 1000
+          phase = 'draw'
+          startTick(); render()
+          break
+        case 'hint':
+          if (role === 'guess' && phase === 'draw' && d.r === round && typeof d.ch === 'string') { info.ch = d.ch.slice(0, 2); render() }
+          break
+        case 'guess':
+          if (role === 'draw' && phase === 'draw' && d.r === round && typeof d.text === 'string') {
+            const text = d.text.slice(0, 20)
+            guesses.push({who: 'them', text}); renderGuesses()
+            if (isRight(text)) finishRound(true, 'ok')
+          }
+          break
+        case 'end':
+          if (role === 'guess' && phase === 'draw' && d.r === round) {
+            applyEnd({r: d.r, ok: !!d.ok, why: String(d.why || ''), word: String(d.word || '?').slice(0, 20),
+              g: Math.round(num(d.g, 0, 50)), d: Math.round(num(d.d, 0, 50))})
+          }
+          break
+      }
+    })
+
+    drawAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || d.r !== round || role !== 'guess' || phase !== 'draw') return
+      if (d.k === 's') {
+        const s = {c: safeColor(d.c), w: num(d.w, 1, 80), p: [num(d.x, 0, W), num(d.y, 0, H)]}
+        strokes.push(s); drawStroke(s, 0)
+      } else if (d.k === 'p' && Array.isArray(d.p)) {
+        const s = strokes[strokes.length - 1]
+        if (!s) return
+        const n = s.p.length / 2
+        for (let i = 0; i + 1 < d.p.length; i += 2) s.p.push(num(d.p[i], 0, W), num(d.p[i + 1], 0, H))
+        drawStroke(s, n - 1)
+      } else if (d.k === 'u') { strokes.pop(); redraw() }
+      else if (d.k === 'c') { strokes = []; redraw() }
+    })
+  },
+  onOpponentJoin(id) {
+    if (opp !== id) { opp = id; resetGame() }
+    sendHello(false)
+  },
+  onOpponentLeave() { opp = null; resetGame() }
+})
+</script>
+</body>
+</html>

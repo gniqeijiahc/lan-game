@@ -13,6 +13,7 @@ shared/
 games/
   rps/index.html    剪刀石头布
   connect-four/index.html    四子棋
+  draw/index.html   你画我猜（画布笔迹实时同步，词库在文件里的 WORDS）
 ```
 
 ## 新增一个游戏
