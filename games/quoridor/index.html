@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>步步为营 Quoridor</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  :root { --c0:#2f6fed; --c1:#e5484d; }
+  main { padding:12px; }   /* 9×9 棋盘需要尽量宽，360px 时每格约 29px */
+  #game { padding:10px 8px; }
+  #game > :not(#board) { margin-left:4px; margin-right:4px; }
+  .score { display:flex; justify-content:space-around; text-align:center; }
+  .score b { display:block; font-size:28px; line-height:1.2; }
+  .score span { font-size:13px; color:var(--muted); }
+  .round { text-align:center; color:var(--muted); font-size:14px; margin-top:6px; }
+  .pl { display:flex; justify-content:space-between; align-items:center; padding:6px 10px; margin-top:6px;
+    border-radius:10px; border:2px solid transparent; font-size:14px; }
+  .pl.turn { border-color:var(--ok); }
+  .dot { display:inline-block; width:14px; height:14px; border-radius:50%; vertical-align:-2px; margin-right:6px; }
+  #result { text-align:center; font-size:22px; font-weight:700; min-height:34px; margin-top:4px; }
+  #result.win { color:var(--ok); } #result.lose { color:var(--bad); } #result.draw { color:var(--warn); }
+  #hint { text-align:center; color:var(--muted); font-size:14px; min-height:22px; }
+
+  #board { display:block; width:100%; max-width:420px; margin:6px auto 4px; touch-action:manipulation;
+    -webkit-user-select:none; user-select:none; }
+  #board .bg { fill:var(--muted); opacity:.45; }
+  #board .cell { fill:var(--card); }
+  #board .goal0 { fill:var(--c0); opacity:.14; }
+  #board .goal1 { fill:var(--c1); opacity:.14; }
+  #board .legal { fill:var(--accent); opacity:.3; }
+  #board .legal.sel { opacity:.65; }
+  #board .tip { fill:var(--accent); opacity:.8; }
+  #board .p0 { fill:var(--c0); } #board .p1 { fill:var(--c1); }
+  #board .pawn.me { stroke:var(--text); stroke-width:.8; }
+  #board .w0 { fill:var(--c0); } #board .w1 { fill:var(--c1); }
+  #board .lastw { stroke:var(--text); stroke-width:.5; }
+  #board .lastc { fill:none; stroke:var(--ok); stroke-width:.9; }
+  #board .pv.ok { fill:var(--ok); opacity:.8; }
+  #board .pv.bad { fill:var(--bad); opacity:.7; }
+
+  .bar { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+  .bar button, #again { min-height:48px; padding:10px; border:2px solid var(--line); border-radius:12px;
+    background:var(--card); color:var(--text); font:inherit; cursor:pointer; touch-action:manipulation; }
+  .bar button.on { border-color:var(--accent); background:rgba(47,111,237,.12); }
+  .bar button.go, #again { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  .bar button:disabled { opacity:.45; cursor:not-allowed; }
+  #again { display:block; width:calc(100% - 8px); margin-top:10px; }
+  .rules { margin:0; padding-left:20px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>🧱 步步为营 Quoridor</h1>
+
+  <div id="lobby"></div>
+
+  <div class="card" id="game">
+    <div class="score">
+      <div><b id="sMe">0</b><span>我</span></div>
+      <div><b id="sDraw">0</b><span>平局</span></div>
+      <div><b id="sThem">0</b><span>对方</span></div>
+    </div>
+    <div class="round" id="round">第 1 局</div>
+
+    <div class="pl" id="plT"><span><i class="dot" id="dT"></i><span id="nT">对方</span></span><span id="wT">挡板 10</span></div>
+    <div id="result"></div>
+    <div id="hint"></div>
+
+    <svg id="board" viewBox="0 0 110 110" role="img" aria-label="9×9 棋盘"></svg>
+
+    <div class="pl" id="plB"><span><i class="dot" id="dB"></i><span id="nB">我</span></span><span id="wB">挡板 10</span></div>
+
+    <div class="bar" id="modes">
+      <button type="button" id="mMove">🚶 走棋</button>
+      <button type="button" id="mWall">🧱 放挡板</button>
+    </div>
+    <div class="bar" id="acts">
+      <button type="button" id="rot">🔄 换方向</button>
+      <button type="button" id="ok" class="go">✅ 确认</button>
+    </div>
+    <button id="again" type="button" hidden>再来一局</button>
+  </div>
+
+  <div class="card muted">
+    <ol class="rules">
+      <li>每回合二选一：<b>走一步</b>（上下左右），或<b>放一块挡板</b>（占两格宽）。</li>
+      <li>先走到对面底线（对方起点那一行）就赢。</li>
+      <li>对方棋子挡在面前时可以跳过去；如果跳不过去，可以斜着走。</li>
+      <li>每人 10 块挡板；挡板不能重叠、交叉，也不能把任何一方的路完全堵死。</li>
+      <li>放挡板：点棋盘上格子之间的交叉点，再点同一处可换横竖，最后点「确认」。</li>
+      <li>先手由双方各出一个随机种子合并决定。</li>
+    </ol>
+  </div>
+</main>
+
+<script type="module">
+import {createLobby} from '../../shared/lobby.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+// ===RULES-START===
+// 纯规则，不碰界面。坐标：行 r、列 c 都是 0~8；先手(0号)起点在 (8,4)，目标是第 0 行；后手(1号)相反。
+// 挡板用"锚点"(r,c)，r、c 在 0~7：
+//   横板 h：压在第 r 行与第 r+1 行之间，盖住第 c、c+1 两列
+//   竖板 v：压在第 c 列与第 c+1 列之间，盖住第 r、r+1 两行
+const N = 9, MAXW = 10
+const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+
+function newState() {
+  return {
+    pawn: [{r: 8, c: 4}, {r: 0, c: 4}],
+    left: [MAXW, MAXW],
+    hB: Array(72).fill(false),   // hB[r*9+c]：(r,c) 与 (r+1,c) 之间有墙
+    vB: Array(72).fill(false),   // vB[r*8+c]：(r,c) 与 (r,c+1) 之间有墙
+    hA: Array(64).fill(false),   // 横板锚点
+    vA: Array(64).fill(false),   // 竖板锚点
+    walls: []
+  }
+}
+
+function canStep(s, r, c, dr, dc) {
+  const nr = r + dr, nc = c + dc
+  if (nr < 0 || nr >= N || nc < 0 || nc >= N) return false
+  if (dr === -1) return !s.hB[(r - 1) * 9 + c]
+  if (dr === 1) return !s.hB[r * 9 + c]
+  if (dc === -1) return !s.vB[r * 8 + (c - 1)]
+  return !s.vB[r * 8 + c]
+}
+
+function legalMoves(s, p) {
+  const me = s.pawn[p], op = s.pawn[1 - p], out = []
+  for (const [dr, dc] of DIRS) {
+    if (!canStep(s, me.r, me.c, dr, dc)) continue
+    const nr = me.r + dr, nc = me.c + dc
+    if (nr !== op.r || nc !== op.c) { out.push({r: nr, c: nc}); continue }
+    // 对方挡在前面：能直跳就直跳，否则斜走
+    if (canStep(s, op.r, op.c, dr, dc)) { out.push({r: op.r + dr, c: op.c + dc}); continue }
+    for (const [er, ec] of DIRS) {
+      if ((er === 0) === (dr === 0)) continue   // 只取与前进方向垂直的两个方向
+      if (canStep(s, op.r, op.c, er, ec)) out.push({r: op.r + er, c: op.c + ec})
+    }
+  }
+  return out
+}
+
+function hasPath(s, p) {
+  const goal = p === 0 ? 0 : 8
+  const seen = new Uint8Array(81), q = [s.pawn[p].r * 9 + s.pawn[p].c]
+  seen[q[0]] = 1
+  for (let i = 0; i < q.length; i++) {
+    const r = Math.floor(q[i] / 9), c = q[i] % 9
+    if (r === goal) return true
+    for (const [dr, dc] of DIRS) {
+      if (!canStep(s, r, c, dr, dc)) continue
+      const k = (r + dr) * 9 + c + dc
+      if (!seen[k]) { seen[k] = 1; q.push(k) }
+    }
+  }
+  return false
+}
+
+function setWall(s, r, c, o, on) {
+  if (o === 'h') { s.hA[r * 8 + c] = on; s.hB[r * 9 + c] = on; s.hB[r * 9 + c + 1] = on }
+  else { s.vA[r * 8 + c] = on; s.vB[r * 8 + c] = on; s.vB[(r + 1) * 8 + c] = on }
+}
+
+// 返回 null 表示可以放；否则返回原因：none 没挡板了 / bad 参数不对 / overlap 重叠或交叉 / block 堵死了路
+function wallError(s, p, r, c, o) {
+  if (s.left[p] <= 0) return 'none'
+  if (!(r >= 0 && r < 8 && c >= 0 && c < 8) || (o !== 'h' && o !== 'v')) return 'bad'
+  const i = r * 8 + c
+  if (s.hA[i] || s.vA[i]) return 'overlap'
+  if (o === 'h') { if ((c > 0 && s.hA[i - 1]) || (c < 7 && s.hA[i + 1])) return 'overlap' }
+  else { if ((r > 0 && s.vA[i - 8]) || (r < 7 && s.vA[i + 8])) return 'overlap' }
+  setWall(s, r, c, o, true)
+  const ok = hasPath(s, 0) && hasPath(s, 1)
+  setWall(s, r, c, o, false)
+  return ok ? null : 'block'
+}
+
+function doMove(s, p, r, c) { s.pawn[p] = {r, c}; return r === (p === 0 ? 0 : 8) }   // 返回是否到达终点
+function doWall(s, p, r, c, o) { setWall(s, r, c, o, true); s.left[p]--; s.walls.push({r, c, o, by: p}) }
+// ===RULES-END===
+
+const MAXMOVES = 1000          // 步数上限，超过算平局，避免无限拖下去
+const HEX64 = /^[0-9a-f]{64}$/
+
+async function sha(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ---------- 状态（两边各自运行同一套规则，没有"主机"） ----------
+let room = null
+let opp = null                 // 对手 peerId
+let selfId = null              // 自己的 peerId
+let epoch = 0                  // 每次重置 +1，用来丢弃过期的异步结果
+let g = 1                      // 局数
+let phase = 'idle'             // idle 无对手 | seeding 决定先手 | playing 对局中 | over 本局结束
+let S = null, moveCount = 0, myIdx = -1    // myIdx: 0 先手(🔵，起点在下) 1 后手(🔴)
+let result = null              // 0/1 赢家，-1 平局
+let lastAct = null
+let score = {me: 0, them: 0, draw: 0}
+let mine = null                // {g, seed, nonce, hash, revealed}
+let warn = ''
+let mode = 'move', selMove = null, selWall = null, wallO = 'h'
+const theirCommit = {}         // g -> hash
+const theirSeed = {}           // g -> seed
+const pending = new Map()      // n -> 动作，提前到达或乱序的对方操作
+
+let commitAct = null, revealAct = null, moveAct = null
+const send = (act, d) => act && act.send(d).catch(() => {})
+
+function newGameState() {
+  S = newState(); moveCount = 0; myIdx = -1; result = null; lastAct = null
+  mine = null; warn = ''
+  mode = 'move'; selMove = null; selWall = null; wallO = 'h'
+  pending.clear()
+}
+
+function resetGame() {
+  epoch++
+  g = 1
+  score = {me: 0, them: 0, draw: 0}
+  for (const k in theirCommit) delete theirCommit[k]
+  for (const k in theirSeed) delete theirSeed[k]
+  newGameState()
+  phase = opp ? 'seeding' : 'idle'
+  render()
+  if (opp) beginSeed()
+}
+
+// ---------- 决定先手：先交哈希，再揭晓种子，两个种子异或后取最低位 ----------
+async function beginSeed() {
+  const ep = epoch
+  if (!selfId) {
+    try { selfId = (await room.getSelf()).peerId } catch {}
+    if (ep !== epoch) return
+    if (!selfId) { warn = '⚠️ 无法获取自己的编号'; render(); return }
+  }
+  const seed = crypto.getRandomValues(new Uint32Array(1))[0]
+  const nonce = crypto.randomUUID()
+  const hash = await sha(`${g}|${seed}|${nonce}`)
+  if (ep !== epoch || phase !== 'seeding') return
+  mine = {g, seed, nonce, hash, revealed: false}
+  send(commitAct, {g, hash})
+  render()
+  tryReveal()
+}
+
+function tryReveal() {
+  if (phase !== 'seeding' || !mine || mine.revealed || !(mine.g in theirCommit)) return
+  mine.revealed = true
+  send(revealAct, {g: mine.g, seed: mine.seed, nonce: mine.nonce})
+  tryStart()
+}
+
+function tryStart() {
+  if (phase !== 'seeding' || !mine || !mine.revealed || !(g in theirSeed)) return
+  const lowId = selfId < opp ? selfId : opp
+  const highId = selfId < opp ? opp : selfId
+  const firstId = (((mine.seed ^ theirSeed[g]) >>> 0) & 1) === 0 ? lowId : highId
+  myIdx = selfId === firstId ? 0 : 1
+  phase = 'playing'
+  render()
+  drain()
+}
+
+// ---------- 回合 ----------
+const turnOf = () => moveCount % 2
+const canAct = () => phase === 'playing' && turnOf() === myIdx
+
+// 双方共用：把一步操作落到棋盘上。不合法返回 false，状态不变。
+function applyAction(a) {
+  const p = turnOf()
+  if (a.k === 'm') {
+    if (!legalMoves(S, p).some(m => m.r === a.r && m.c === a.c)) return false
+    const won = doMove(S, p, a.r, a.c)
+    lastAct = {k: 'm', r: a.r, c: a.c}
+    moveCount++
+    if (won) { result = p; phase = 'over'; if (p === myIdx) score.me++; else score.them++ }
+  } else {
+    if (wallError(S, p, a.r, a.c, a.o)) return false
+    doWall(S, p, a.r, a.c, a.o)
+    lastAct = {k: 'w', r: a.r, c: a.c, o: a.o}
+    moveCount++
+  }
+  if (phase !== 'over' && moveCount >= MAXMOVES) { result = -1; phase = 'over'; score.draw++ }
+  return true
+}
+
+// 处理对方提前到达或乱序的操作：只接收"下一步"
+function drain() {
+  let applied = false
+  while (phase === 'playing' && turnOf() !== myIdx) {
+    const n = moveCount + 1
+    if (!pending.has(n)) break
+    const a = pending.get(n); pending.delete(n)
+    if (applyAction(a)) applied = true
+    else warn = '⚠️ 收到非法操作，已忽略'
+  }
+  for (const n of [...pending.keys()]) if (n <= moveCount) pending.delete(n)
+  if (applied) { warn = ''; selMove = null; selWall = null }
+  render()
+}
+
+function confirm() {
+  if (!canAct()) return
+  let a = null
+  if (mode === 'move' && selMove) a = {k: 'm', r: selMove.r, c: selMove.c}
+  else if (mode === 'wall' && selWall && !wallError(S, myIdx, selWall.r, selWall.c, selWall.o)) a = {k: 'w', r: selWall.r, c: selWall.c, o: selWall.o}
+  if (!a) return
+  const n = moveCount + 1
+  if (!applyAction(a)) return
+  warn = ''; selMove = null; selWall = null
+  send(moveAct, Object.assign({g, n}, a))
+  render()
+}
+
+function again() {
+  if (phase !== 'over' || !opp) return
+  for (const k in theirCommit) if (+k <= g) delete theirCommit[k]
+  for (const k in theirSeed) delete theirSeed[k]
+  g++
+  newGameState()
+  phase = 'seeding'
+  render()
+  beginSeed()
+}
+
+// ---------- 界面 ----------
+const CELL = 10, GAP = 2.5, P = CELL + GAP, VB = 9 * CELL + 8 * GAP   // 与 viewBox 0 0 110 110 对应
+const boardEl = $('board')
+const NS = 'http://www.w3.org/2000/svg'
+function svgEl(tag, attrs, cls) {
+  const e = document.createElementNS(NS, tag)
+  for (const k in attrs) e.setAttribute(k, attrs[k])
+  if (cls) e.setAttribute('class', cls)
+  return e
+}
+
+function drawBoard() {
+  const flip = myIdx === 1                      // 后手把棋盘转 180°，让自己的棋子永远在下方
+  const dR = r => flip ? 8 - r : r, dC = c => flip ? 8 - c : c
+  const dA = a => flip ? 7 - a : a              // 挡板锚点
+  // 挡板旋转 180° 后，锚点 (r,c) 变成 (7-r,7-c)，横竖方向不变
+  const hRect = (r, c, cls) => svgEl('rect', {x: dA(c) * P, y: dA(r) * P + CELL, width: 2 * CELL + GAP, height: GAP, rx: .6}, cls)
+  const vRect = (r, c, cls) => svgEl('rect', {x: dA(c) * P + CELL, y: dA(r) * P, width: GAP, height: 2 * CELL + GAP, rx: .6}, cls)
+  const wRect = (r, c, o, cls) => o === 'h' ? hRect(r, c, cls) : vRect(r, c, cls)
+
+  boardEl.replaceChildren()
+  boardEl.appendChild(svgEl('rect', {x: 0, y: 0, width: VB, height: VB, rx: 2}, 'bg'))
+  const me = myIdx >= 0 ? myIdx : 0
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    boardEl.appendChild(svgEl('rect', {x: dC(c) * P, y: dR(r) * P, width: CELL, height: CELL, rx: 1.2}, 'cell'))
+  }
+  // 终点行底色：先手要去第 0 行，后手要去第 8 行
+  for (let c = 0; c < 9; c++) {
+    boardEl.appendChild(svgEl('rect', {x: dC(c) * P, y: dR(0) * P, width: CELL, height: CELL, rx: 1.2}, 'goal0'))
+    boardEl.appendChild(svgEl('rect', {x: dC(c) * P, y: dR(8) * P, width: CELL, height: CELL, rx: 1.2}, 'goal1'))
+  }
+  if (lastAct && lastAct.k === 'm') {
+    boardEl.appendChild(svgEl('rect', {x: dC(lastAct.c) * P, y: dR(lastAct.r) * P, width: CELL, height: CELL, rx: 1.2}, 'lastc'))
+  }
+  if (canAct() && mode === 'move') {
+    for (const m of legalMoves(S, myIdx)) {
+      const sel = selMove && selMove.r === m.r && selMove.c === m.c
+      boardEl.appendChild(svgEl('rect', {x: dC(m.c) * P, y: dR(m.r) * P, width: CELL, height: CELL, rx: 1.2}, 'legal' + (sel ? ' sel' : '')))
+      boardEl.appendChild(svgEl('circle', {cx: dC(m.c) * P + CELL / 2, cy: dR(m.r) * P + CELL / 2, r: 1.3}, 'tip'))
+    }
+  }
+  for (const w of S.walls) {
+    const isLast = lastAct && lastAct.k === 'w' && lastAct.r === w.r && lastAct.c === w.c && lastAct.o === w.o
+    boardEl.appendChild(wRect(w.r, w.c, w.o, 'w' + w.by + (isLast ? ' lastw' : '')))
+  }
+  if (canAct() && mode === 'wall' && selWall) {
+    const bad = wallError(S, myIdx, selWall.r, selWall.c, selWall.o)
+    boardEl.appendChild(wRect(selWall.r, selWall.c, selWall.o, 'pv ' + (bad ? 'bad' : 'ok')))
+  }
+  for (let p = 0; p < 2; p++) {
+    const pw = S.pawn[p]
+    boardEl.appendChild(svgEl('circle', {cx: dC(pw.c) * P + CELL / 2, cy: dR(pw.r) * P + CELL / 2, r: 3.6},
+      'pawn p' + p + (p === me && myIdx >= 0 ? ' me' : '')))
+  }
+}
+
+const WALL_HINT = {
+  overlap: '这里和已有挡板重叠或交叉，换个位置',
+  block: '不能把任何一方的路完全堵死',
+  none: '你的挡板用完了',
+  bad: '位置不对'
+}
+
+function render() {
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('sDraw').textContent = score.draw
+  $('round').textContent = `第 ${g} 局`
+
+  const meI = myIdx >= 0 ? myIdx : 0, thI = 1 - meI
+  $('dB').style.background = `var(--c${meI})`
+  $('dT').style.background = `var(--c${thI})`
+  $('nB').textContent = myIdx >= 0 ? `我（${myIdx === 0 ? '先手' : '后手'}）` : '我'
+  $('nT').textContent = '对方'
+  $('wB').textContent = `挡板 ${S.left[meI]}`
+  $('wT').textContent = `挡板 ${S.left[thI]}`
+  const playing = phase === 'playing'
+  $('plB').classList.toggle('turn', playing && turnOf() === meI)
+  $('plT').classList.toggle('turn', playing && turnOf() === thI)
+
+  drawBoard()
+
+  const act = canAct()
+  $('modes').hidden = $('acts').hidden = phase === 'over'
+  $('mMove').classList.toggle('on', mode === 'move')
+  $('mWall').classList.toggle('on', mode === 'wall')
+  $('mMove').disabled = !act
+  $('mWall').disabled = !act || S.left[myIdx] <= 0
+  $('rot').disabled = !act || mode !== 'wall'
+  let okEnabled = false
+  if (act) okEnabled = mode === 'move' ? !!selMove : (!!selWall && !wallError(S, myIdx, selWall.r, selWall.c, selWall.o))
+  $('ok').disabled = !okEnabled
+
+  let res = '', cls = '', hint = ''
+  if (phase === 'idle') hint = '等对方加入…'
+  else if (phase === 'seeding') {
+    if (g in theirCommit) hint = '正在决定先手…'
+    else hint = g === 1 ? '正在连接对手…' : '已请求再来一局，等对方确认…'
+  } else if (phase === 'playing') {
+    if (!act) hint = '等待对方行动…'
+    else if (mode === 'move') hint = selMove ? '点「确认」走到这一格' : '轮到你了：点高亮的格子选择走法'
+    else if (!selWall) hint = '点格子之间的交叉点放挡板；再点同一处可换横竖'
+    else {
+      const err = wallError(S, myIdx, selWall.r, selWall.c, selWall.o)
+      hint = err ? WALL_HINT[err] : '点「确认」放置；再点同一处可换横竖'
+    }
+  } else {
+    if (result === -1) { res = '平局'; cls = 'draw' }
+    else if (result === myIdx) { res = '你赢了 🎉'; cls = 'win' }
+    else { res = '你输了'; cls = 'lose' }
+    hint = (g + 1) in theirCommit ? '对方想再来一局' : ''
+  }
+  $('result').textContent = res
+  $('result').className = cls
+  $('hint').textContent = warn || hint
+  $('again').hidden = phase !== 'over'
+}
+
+function setMode(m) {
+  if (!canAct() || mode === m) return
+  mode = m; selMove = null; selWall = null; warn = ''
+  render()
+}
+$('mMove').onclick = () => setMode('move')
+$('mWall').onclick = () => setMode('wall')
+$('rot').onclick = () => {
+  if (!canAct() || mode !== 'wall') return
+  wallO = wallO === 'h' ? 'v' : 'h'
+  if (selWall) selWall = {r: selWall.r, c: selWall.c, o: wallO}
+  warn = ''; render()
+}
+$('ok').onclick = confirm
+$('again').onclick = again
+
+// 点棋盘：把点击位置换算成"最近的格子 / 最近的交叉点"，不依赖每个格子本身有多大
+boardEl.addEventListener('click', e => {
+  if (!canAct()) return
+  const rect = boardEl.getBoundingClientRect()
+  if (!rect.width) return
+  const x = (e.clientX - rect.left) / rect.width * VB
+  const y = (e.clientY - rect.top) / rect.height * VB
+  const clamp = (v, hi) => Math.max(0, Math.min(hi, v))
+  const flip = myIdx === 1
+  if (mode === 'move') {
+    const dc = clamp(Math.round((x - CELL / 2) / P), 8), dr = clamp(Math.round((y - CELL / 2) / P), 8)
+    const r = flip ? 8 - dr : dr, c = flip ? 8 - dc : dc
+    const ok = legalMoves(S, myIdx).some(m => m.r === r && m.c === c)
+    selMove = ok && !(selMove && selMove.r === r && selMove.c === c) ? {r, c} : null
+  } else {
+    const ic = clamp(Math.round((x - CELL - GAP / 2) / P), 7), ir = clamp(Math.round((y - CELL - GAP / 2) / P), 7)
+    const r = flip ? 7 - ir : ir, c = flip ? 7 - ic : ic
+    if (selWall && selWall.r === r && selWall.c === c) selWall = {r, c, o: selWall.o === 'h' ? 'v' : 'h'}
+    else selWall = {r, c, o: wallO}
+    wallO = selWall.o
+  }
+  warn = ''
+  render()
+})
+
+newGameState()
+render()
+
+await createLobby({
+  gameId: 'quoridor',
+  container: $('lobby'),
+  setup(r) {
+    room = r
+    commitAct = room.makeAction('commit')
+    revealAct = room.makeAction('reveal')
+    moveAct = room.makeAction('move')
+
+    commitAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || typeof d.hash !== 'string' || !HEX64.test(d.hash)) return
+      if (!Number.isInteger(d.g)) return
+      const ok = (phase === 'seeding' && d.g === g) || (phase === 'over' && d.g === g + 1)
+      if (!ok || d.g in theirCommit) return
+      theirCommit[d.g] = d.hash
+      render()
+      tryReveal()
+    })
+
+    revealAct.onMessage(async (d, {peerId}) => {
+      if (peerId !== opp || !d || phase !== 'seeding') return
+      if (!Number.isInteger(d.g) || d.g !== g || d.g in theirSeed) return
+      if (!Number.isInteger(d.seed) || d.seed < 0 || d.seed > 0xFFFFFFFF) return
+      if (typeof d.nonce !== 'string' || d.nonce.length > 64) return
+      const c = theirCommit[d.g]
+      if (!c) return
+      const ep = epoch, gg = g
+      const h = await sha(`${d.g}|${d.seed}|${d.nonce}`)
+      if (ep !== epoch || phase !== 'seeding' || gg !== g || g in theirSeed) return
+      if (h !== c) { warn = '⚠️ 对方的先手种子校验失败'; render(); return }
+      theirSeed[g] = d.seed
+      tryStart()
+    })
+
+    moveAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || (phase !== 'seeding' && phase !== 'playing')) return
+      if (!Number.isInteger(d.g) || d.g !== g) return
+      if (!Number.isInteger(d.n) || d.n < 1 || d.n > MAXMOVES) return
+      if (d.n <= moveCount || d.n > moveCount + 2 || pending.has(d.n)) return    // 过期、重复或太超前
+      let a
+      if (d.k === 'm') {
+        if (!Number.isInteger(d.r) || !Number.isInteger(d.c) || d.r < 0 || d.r > 8 || d.c < 0 || d.c > 8) return
+        a = {k: 'm', r: d.r, c: d.c}
+      } else if (d.k === 'w') {
+        if (!Number.isInteger(d.r) || !Number.isInteger(d.c) || d.r < 0 || d.r > 7 || d.c < 0 || d.c > 7) return
+        if (d.o !== 'h' && d.o !== 'v') return
+        a = {k: 'w', r: d.r, c: d.c, o: d.o}
+      } else return
+      pending.set(d.n, a)
+      drain()
+    })
+  },
+  onOpponentJoin(id) { opp = id; resetGame() },
+  onOpponentLeave() { opp = null; resetGame() }
+})
+</script>
+</body>
+</html>
