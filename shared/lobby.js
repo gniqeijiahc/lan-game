@@ -7,15 +7,15 @@
 //   const lobby = await createLobby({
 //     gameId: 'rps',
 //     container: document.getElementById('lobby'),
-//     setup(room) { /* 在这里 room.makeAction(...) 并注册 onMessage */ },
+//     setup(room, acceptPeer) { /* 在这里 room.makeAction(...) 并注册 onMessage */ },
 //     onOpponentJoin(peerId) {}, onOpponentLeave() {}
 //   })
 
 const VERSION = '0.27.0'   // 固定 Trystero 版本，避免库更新后接口变化把游戏弄坏
 const STRATEGY_URL = {
-  nostr:   `https://esm.run/trystero@${VERSION}`,
-  torrent: `https://esm.run/@trystero-p2p/torrent@${VERSION}`,
-  mqtt:    `https://esm.run/@trystero-p2p/mqtt@${VERSION}`
+  nostr:   `https://cdn.jsdelivr.net/npm/trystero@${VERSION}/+esm`,
+  torrent: `https://cdn.jsdelivr.net/npm/@trystero-p2p/torrent@${VERSION}/+esm`,
+  mqtt:    `https://cdn.jsdelivr.net/npm/@trystero-p2p/mqtt@${VERSION}/+esm`
 }
 const QR_SRC = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js'
 const APP_ID = 'gniqeijiahc/lan-game'   // 全局唯一的应用名，避免和别人撞房间
@@ -87,8 +87,9 @@ export async function createLobby({gameId, container, setup, onOpponentJoin, onO
   let room
   try {
     // password 让数据在两端之间加密；房间名带上游戏名，不同游戏互不干扰
-    room = joinRoom({appId: APP_ID, password: roomId}, `${gameId}:${roomId}`)
-    if (setup) setup(room)   // 游戏在这里立刻注册消息处理，避免漏掉早到的消息
+    const config = {appId: APP_ID, password: roomId}
+    if (params.get('identity') === 'none') config.identity = 'none'
+    room = joinRoom(config, `${gameId}:${roomId}`)
   } catch (err) {
     setStatus('❌ 联机初始化失败', false)
     el('detail').textContent = String(err && err.stack || err)
@@ -107,10 +108,27 @@ export async function createLobby({gameId, container, setup, onOpponentJoin, onO
     el('share').hidden = peers.size > 0
   }
 
+  const acceptPeer = peerId => {
+    if (!peerId) return false
+    if (!opp) {
+      opp = peerId
+      if (onOpponentJoin) onOpponentJoin(peerId)
+    }
+    refresh()
+    return peerId === opp
+  }
+
+  try {
+    if (setup) setup(room, acceptPeer)
+  } catch (err) {
+    setStatus('❌ 联机初始化失败', false)
+    el('detail').textContent = String(err && err.stack || err)
+    return null
+  }
+
   room.onPeerJoin(async ({peerId}) => {
     peers.add(peerId)
-    if (!opp) { opp = peerId; if (onOpponentJoin) onOpponentJoin(peerId) }
-    refresh()
+    acceptPeer(peerId)
     try { const ms = await room.ping(peerId); el('detail').textContent = `${detailBase} · 延迟约 ${Math.round(ms)} ms` } catch {}
   })
   room.onPeerLeave(({peerId}) => {

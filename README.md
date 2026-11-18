@@ -27,7 +27,13 @@ games/
    await createLobby({
      gameId: 'gomoku',
      container: document.getElementById('lobby'),
-     setup(room) { /* room.makeAction(...) 并 onMessage */ },
+     setup(room, acceptPeer) {
+       const action = room.makeAction('move')
+       action.onMessage((data, {peerId}) => {
+         if (!acceptPeer(peerId)) return
+         /* 处理对手消息 */
+       })
+     },
      onOpponentJoin(peerId) {}, onOpponentLeave() {}
    })
    ```
@@ -41,6 +47,27 @@ games/
 - `?s=mqtt`
 
 手机流量（CGNAT）或严格路由器下可能打洞失败，这是 WebRTC 的限制，不是代码问题。
+
+## 自动联机测试
+
+测试脚本会启动本地静态服务器和两个独立游戏页面，验证四款游戏的连接、操作同步和结果显示，并在终端输出每款游戏的通过/失败状态。首次运行需安装 Node.js、Chromium 及项目依赖：
+
+```powershell
+cd lan-game
+npm.cmd install
+npx.cmd playwright install chromium
+npm.cmd test
+```
+
+默认使用 Nostr 信令。可以通过环境变量切换测试通道，或显示浏览器窗口：
+
+```powershell
+$env:SIGNALING = "torrent"
+$env:HEADED = "1"
+npm.cmd test
+```
+
+测试成功时进程返回 `0`；任一游戏失败或测试环境启动失败时返回非零退出码。
 
 ## 注意
 

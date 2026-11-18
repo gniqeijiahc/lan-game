@@ -395,14 +395,13 @@ const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? +v : 
 await createLobby({
   gameId: 'draw',
   container: $('lobby'),
-  setup(room) {
+  setup(room, acceptPeer) {
     ctlAct = room.makeAction('ctl')
     drawAct = room.makeAction('draw')
 
     ctlAct.onMessage((d, {peerId}) => {
       if (!d || typeof d !== 'object') return
-      if (opp === null) opp = peerId          // 对方的消息比"加入"事件先到时的兜底
-      if (peerId !== opp) return
+      if (!acceptPeer(peerId)) return
       switch (d.t) {
         case 'hello':
           if (typeof d.r !== 'number') return
@@ -439,7 +438,7 @@ await createLobby({
     })
 
     drawAct.onMessage((d, {peerId}) => {
-      if (peerId !== opp || !d || d.r !== round || role !== 'guess' || phase !== 'draw') return
+      if (!d || !acceptPeer(peerId) || d.r !== round || role !== 'guess' || phase !== 'draw') return
       if (d.k === 's') {
         const s = {c: safeColor(d.c), w: num(d.w, 1, 80), p: [num(d.x, 0, W), num(d.y, 0, H)]}
         strokes.push(s); drawStroke(s, 0)

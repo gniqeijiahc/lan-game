@@ -1,0 +1,10 @@
+{
+  "name": "lan-game",
+  "private": true,
+  "scripts": {
+    "test": "node test-games.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.1"
+  }
+}

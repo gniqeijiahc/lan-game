@@ -287,15 +287,15 @@ render()
 await createLobby({
   gameId: 'connect-four',
   container: $('lobby'),
-  setup(r) {
+  setup(r, acceptPeer) {
     room = r
     commitAct = room.makeAction('commit')
     revealAct = room.makeAction('reveal')
     moveAct = room.makeAction('move')
 
     commitAct.onMessage((d, {peerId}) => {
-      if (peerId !== opp || !d || typeof d.hash !== 'string' || !HEX64.test(d.hash)) return
-      if (!Number.isInteger(d.g)) return
+      if (!d || typeof d.hash !== 'string' || !HEX64.test(d.hash) ||
+          !Number.isInteger(d.g) || !acceptPeer(peerId)) return
       const ok = (phase === 'seeding' && d.g === g) || (phase === 'over' && d.g === g + 1)
       if (!ok || d.g in theirCommit) return
       theirCommit[d.g] = d.hash
@@ -304,7 +304,7 @@ await createLobby({
     })
 
     revealAct.onMessage(async (d, {peerId}) => {
-      if (peerId !== opp || !d || phase !== 'seeding') return
+      if (!d || !acceptPeer(peerId) || phase !== 'seeding') return
       if (!Number.isInteger(d.g) || d.g !== g || d.g in theirSeed) return
       if (!Number.isInteger(d.seed) || d.seed < 0 || d.seed > 0xFFFFFFFF) return
       if (typeof d.nonce !== 'string' || d.nonce.length > 64) return
@@ -319,7 +319,7 @@ await createLobby({
     })
 
     moveAct.onMessage((d, {peerId}) => {
-      if (peerId !== opp || !d || (phase !== 'seeding' && phase !== 'playing')) return
+      if (!d || !acceptPeer(peerId) || (phase !== 'seeding' && phase !== 'playing')) return
       if (!Number.isInteger(d.g) || d.g !== g) return
       if (!Number.isInteger(d.n) || d.n < 1 || d.n > ROWS * COLS) return
       if (!Number.isInteger(d.col) || d.col < 0 || d.col >= COLS) return

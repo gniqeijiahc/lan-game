@@ -175,19 +175,19 @@ render()
 await createLobby({
   gameId: 'rps',
   container: $('lobby'),
-  setup(room) {
+  setup(room, acceptPeer) {
     commitAct = room.makeAction('commit')
     revealAct = room.makeAction('reveal')
 
     commitAct.onMessage((d, {peerId}) => {
-      if (peerId !== opp || !d || typeof d.hash !== 'string') return
+      if (!d || typeof d.hash !== 'string' || !acceptPeer(peerId)) return
       theirCommit[d.round] = d.hash
       render()
       tryReveal()
     })
 
     revealAct.onMessage(async (d, {peerId}) => {
-      if (peerId !== opp || !d || !(d.choice in BEATS)) return
+      if (!d || !(d.choice in BEATS) || !acceptPeer(peerId)) return
       const c = theirCommit[d.round]
       if (!c) return
       if (await sha(`${d.round}|${d.choice}|${d.nonce}`) !== c) {
