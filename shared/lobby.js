@@ -37,6 +37,13 @@ function makeRoomId() {
 
 export async function createLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave}) {
   const params = new URLSearchParams(location.search)
+
+  // 被游戏大厅放进 iframe 运行时：联机由大厅负责，这里只是转接（见 embed.js）
+  if (params.get('embed') === '1' && window.parent !== window) {
+    const {createEmbeddedLobby} = await import('./embed.js')
+    return createEmbeddedLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave})
+  }
+
   const strategy = STRATEGY_URL[params.get('s')] ? params.get('s') : 'nostr'
 
   // 无论是谁打开页面都可以分享：有 # 就用它，没有就生成

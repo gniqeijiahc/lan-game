@@ -6,67 +6,102 @@
 <title>小游戏厅</title>
 <link rel="stylesheet" href="shared/style.css">
 <style>
-  .hero { margin:8px 0 18px; }
+  .hero { margin:8px 0 14px; }
   .hero h1 { font-size:26px; margin:4px 0; }
-  .grid { display:grid; gap:12px; }
-  a.game { display:flex; align-items:center; gap:14px; padding:16px; background:var(--card);
-    border-radius:14px; text-decoration:none; color:var(--text);
-    box-shadow:0 1px 3px rgba(0,0,0,.08); border:2px solid transparent; }
-  a.game:active { border-color:var(--accent); }
-  a.game .icon { font-size:34px; line-height:1; min-width:64px; text-align:center; }
-  a.game .info { flex:1; min-width:0; }
-  a.game .name { font-weight:700; font-size:18px; }
-  a.game .desc { color:var(--muted); font-size:14px; }
-  a.game .tag { display:inline-block; margin-top:4px; padding:1px 8px; border-radius:999px;
-    font-size:12px; color:var(--accent); background:rgba(47,111,237,.12); }
-  a.game .go { color:var(--muted); font-size:22px; }
-  .soon { padding:16px; text-align:center; color:var(--muted); font-size:14px;
-    border:2px dashed var(--line); border-radius:14px; }
-  .steps { margin:18px 0 0; padding-left:20px; }
+  label { display:block; font-size:14px; color:var(--muted); margin:10px 0 4px; }
+  .err { color:var(--bad); font-size:14px; min-height:20px; margin-top:8px; }
+  #code { font-size:26px; letter-spacing:.3em; text-align:center; }
+  .btn { width:100%; padding:12px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; margin-top:12px; touch-action:manipulation; }
+  .btn.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); font-weight:400; }
+  .link { background:none; border:0; color:var(--accent); font:inherit; font-size:14px; cursor:pointer; padding:6px 0; }
+  .bar { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:4px 0 10px; }
+  .bar .t { font-weight:700; font-size:18px; }
+  .badge { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:12px; color:var(--accent); background:rgba(47,111,237,.12); }
+  .badge.host { color:var(--warn); background:rgba(199,122,0,.14); }
+  .badge.me { color:var(--ok); background:rgba(26,155,82,.14); }
+  ul.roster { list-style:none; margin:0; padding:0; }
+  ul.roster li { padding:8px 0; border-bottom:1px solid var(--line); display:flex; align-items:center; }
+  ul.roster li:last-child { border-bottom:0; }
+  ul.roster .nm { font-weight:600; }
+  .grid { display:grid; gap:10px; }
+  button.game { display:flex; align-items:center; gap:14px; width:100%; text-align:left; padding:14px; background:var(--card); color:var(--text); font:inherit; border-radius:14px; border:2px solid transparent; box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer; touch-action:manipulation; }
+  button.game:not(:disabled):active { border-color:var(--accent); }
+  button.game:disabled { opacity:.55; cursor:not-allowed; }
+  button.game .icon { font-size:30px; line-height:1; min-width:60px; text-align:center; }
+  button.game .name { font-weight:700; font-size:17px; }
+  button.game .desc { color:var(--muted); font-size:14px; }
+  button.game .tag { display:inline-block; margin-top:4px; padding:1px 8px; border-radius:999px; font-size:12px; color:var(--accent); background:rgba(47,111,237,.12); }
+  .stage { margin:0 -16px; }
+  .frame { display:block; width:100%; border:0; min-height:300px; background:transparent; }
+  .mirror { padding:0 16px; }
+  .mirror-note { text-align:center; }
 </style>
 </head>
 <body>
 <main>
-  <div class="hero">
-    <h1>🎮 小游戏厅</h1>
-    <div class="muted">选一个游戏，把二维码给朋友扫一下，就能联机对战。</div>
-  </div>
+  <!-- 1. 输入房间号 -->
+  <section id="join">
+    <div class="hero">
+      <h1>🎮 小游戏厅</h1>
+      <div class="muted">输入同一个 4 位房间号，就能和朋友联机。第一个进入的人是房主，由房主选游戏。</div>
+    </div>
+    <form class="card" id="joinForm" novalidate>
+      <label for="name">你的昵称</label>
+      <input type="text" id="name" maxlength="12" autocomplete="off" placeholder="例如：小明">
+      <label for="code">房间号（4 位数字）</label>
+      <input type="text" id="code" inputmode="numeric" pattern="\d{4}" maxlength="4" autocomplete="off" placeholder="0000">
+      <button type="button" class="link" id="rand">随机一个房间号</button>
+      <div class="err" id="joinErr"></div>
+      <button class="btn" type="submit" id="joinBtn">进入房间</button>
+    </form>
+  </section>
 
-  <div class="grid" id="games"></div>
+  <!-- 2. 连接中 -->
+  <section id="connecting" hidden>
+    <div class="card" style="text-align:center">
+      <div id="connMsg" style="font-weight:600">正在寻找房间…</div>
+      <div class="muted">最多约 3 秒；没人时你会成为房主</div>
+    </div>
+  </section>
 
-  <ol class="muted steps">
-    <li>点开一个游戏，页面会出现二维码</li>
-    <li>让对方用手机相机扫码，自动加入</li>
-    <li>两台设备直接连接，不经过游戏服务器</li>
-  </ol>
+  <!-- 3. 大厅 -->
+  <section id="lobby" hidden>
+    <div class="bar">
+      <div class="t">房间 <span id="lbCode"></span></div>
+      <div><span class="badge" id="lbRole"></span><span class="badge" id="lbCount"></span></div>
+    </div>
+    <div class="card">
+      <ul class="roster" id="lbRoster"></ul>
+    </div>
+    <div class="card">
+      <div class="muted">让朋友扫码，或输入房间号加入：</div>
+      <div class="qr" id="qr"></div>
+      <div class="row">
+        <input type="text" id="link" readonly>
+        <button class="small" id="copy" type="button">复制</button>
+      </div>
+    </div>
+    <div class="muted" id="lbHint" style="margin:6px 2px 10px"></div>
+    <div class="grid" id="games"></div>
+    <button class="btn ghost" id="leave1" type="button">离开房间</button>
+  </section>
+
+  <!-- 4. 游戏中 -->
+  <section id="play" hidden>
+    <div class="bar">
+      <div>
+        <div class="t" id="pyGame"></div>
+        <div class="muted"><span id="pyRole"></span> · <span id="pyWho"></span></div>
+      </div>
+      <div>
+        <button class="small" id="endGame" type="button" hidden>结束游戏</button>
+      </div>
+    </div>
+    <div class="muted" id="pyHint"></div>
+    <div class="stage" id="stage"></div>
+    <button class="btn ghost" id="leave2" type="button">离开房间</button>
+  </section>
 </main>
-
-<script>
-// 新增游戏：在 games/ 下建一个文件夹，然后在这里加一项即可
-const GAMES = [
-  {id: 'rps', icon: '✊✌️✋', name: '剪刀石头布', desc: '经典猜拳，双方同时揭晓，防偷看', players: '2 人', path: 'games/rps/'},
-  {id: 'connect-four', icon: '🔴🟡', name: '四子棋', desc: '轮流投子，横竖斜连成 4 个就赢', players: '2 人', path: 'games/connect-four/'},
-  {id: 'draw', icon: '🎨', name: '你画我猜', desc: '轮流画画和猜词，每局 90 秒，猜得越快分越高', players: '2 人', path: 'games/draw/'},
-  {id: 'quoridor', icon: '🧱', name: '步步为营', desc: '先走到对岸就赢，还能放挡板拦路（Quoridor）', players: '2 人', path: 'games/quoridor/'}
-]
-
-const box = document.getElementById('games')
-for (const g of GAMES) {
-  const a = document.createElement('a')
-  a.className = 'game'
-  // 保留当前网址里的 ?s=xxx（切换信令通道的参数）
-  a.href = g.path + location.search
-  a.innerHTML = `<div class="icon"></div><div class="info"><div class="name"></div><div class="desc"></div><span class="tag"></span></div><div class="go">›</div>`
-  a.querySelector('.icon').textContent = g.icon
-  a.querySelector('.name').textContent = g.name
-  a.querySelector('.desc').textContent = g.desc
-  a.querySelector('.tag').textContent = g.players
-  box.appendChild(a)
-}
-const soon = document.createElement('div')
-soon.className = 'soon'
-soon.textContent = '更多游戏开发中…'
-box.appendChild(soon)
-</script>
+<script type="module" src="shared/hub.js"></script>
 </body>
 </html>

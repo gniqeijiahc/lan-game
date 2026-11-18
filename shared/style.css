@@ -32,3 +32,7 @@ input[type=text] { flex:1; min-width:0; padding:10px 12px; border:1px solid var(
   border-radius:10px; background:transparent; color:var(--text); font:inherit; }
 button.small { padding:10px 16px; border:0; border-radius:10px; background:var(--accent);
   color:#fff; font:inherit; cursor:pointer; }
+
+/* 游戏被大厅内嵌运行时：隐藏页面自带的返回链接和标题（大厅已经显示） */
+html.embed .back, html.embed main > h1 { display:none; }
+html.embed main { padding-top:0; }

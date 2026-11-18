@@ -1,37 +1,44 @@
 # 小游戏厅（Trystero 联机）
 
 纯静态网页，托管在 GitHub Pages，不需要自己的服务器。
-打开首页选择游戏 → 页面出现二维码 → 对方扫码加入 → 两台设备 WebRTC 直连。
+
+## 怎么玩
+
+1. 打开首页，输入昵称和 **4 位房间号**（或扫房主分享的二维码）。
+2. **第一个进入房间的人是房主**，由房主选择游戏；之后进入的是客人，只能跟着进入房主选的游戏。
+3. 房间最多 10 人。双人游戏由房主和下一位进入的人上场，其余的人**观战**。
+4. 玩家离开时，观战者按进入顺序补位；**房主离开时，名单里的下一位自动接任房主**。
+5. 房主点"结束游戏"，所有人回到大厅，可以换下一个游戏。
+
+## 工作原理
+
+- 大厅连一次房间，游戏放在 `<iframe>` 里运行，换游戏不会掉线。
+- 游戏里的联机消息由大厅转发（`shared/embed.js` 让游戏以为自己在直接用 Trystero），所以每个游戏页面不用关心房间、房主、观战。
+- 观战画面：房间里有观战者时，第一位玩家的页面会定时把自己的画面拍成快照，发给观战者（只读，不可操作）。
+- 房主判定没有服务器：加入后先等约 3 秒看有没有现成名单，没有就自己当房主；同时进入时按进入时间排序；出现两个房主时人数多的一方胜出。
 
 ## 目录结构
 
 ```
-index.html          游戏大厅（选择游戏）
+index.html            大厅（输入房间号、选游戏）
 shared/
-  lobby.js          所有游戏共用的联机模块（房间号、二维码、连接状态）
-  style.css         共用样式
+  hub.js              大厅界面、游戏内嵌与观战
+  room.js             房间网络层（房间号、房主、名单、接任）
+  embed.js            游戏被内嵌时的联机转接 + 观战快照
+  lobby.js            单页模式的联机模块（游戏独立打开时使用）
+  style.css           共用样式
 games/
-  rps/index.html    剪刀石头布
-  connect-four/index.html    四子棋
-  draw/index.html   你画我猜（画布笔迹实时同步，词库在文件里的 WORDS）
-  quoridor/index.html    步步为营 Quoridor（9×9 棋盘 + 挡板，对称同步）
+  registry.js         游戏清单（新增游戏在这里登记）
+  rps/ connect-four/ draw/ quoridor/   各个游戏
 ```
 
 ## 新增一个游戏
 
-1. 在 `games/` 下新建文件夹，例如 `games/gomoku/index.html`。
-2. 页面里引入共用模块，并在 `setup(room)` 里注册自己的消息：
+给开发者（或 AI）的完整规范见 `GAME_SPEC.md`。简要步骤：
 
-   ```js
-   import {createLobby} from '../../shared/lobby.js'
-   await createLobby({
-     gameId: 'gomoku',
-     container: document.getElementById('lobby'),
-     setup(room) { /* room.makeAction(...) 并 onMessage */ },
-     onOpponentJoin(peerId) {}, onOpponentLeave() {}
-   })
-   ```
-3. 在 `index.html` 的 `GAMES` 数组里加一项，大厅就会出现它的卡片。
+1. 在 `games/<id>/index.html` 写游戏，用 `shared/lobby.js` 的 `createLobby` 联机（参考 `games/rps/`）。
+2. 在 `games/registry.js` 加一项，写明 `min` / `max` 人数。
+3. 游戏既能独立打开调试（页面自带二维码），也会被大厅内嵌运行，不用写两套。
 
 ## 连不上时
 
@@ -40,9 +47,10 @@ games/
 - `?s=torrent`
 - `?s=mqtt`
 
-手机流量（CGNAT）或严格路由器下可能打洞失败，这是 WebRTC 的限制，不是代码问题。
+**同一个房间的所有人必须用同一个通道。** 手机流量（运营商 NAT）或严格路由器下可能打洞失败，这是 WebRTC 的限制，不是代码问题。人越多，某一对设备连不上的可能性越大。
 
 ## 注意
 
-- Trystero 版本固定为 0.27.0（见 `shared/lobby.js`），升级前请先对照新版接口。
-- `shared/lobby.js` 里的 `APP_ID` 是全局唯一的应用名，请勿和别的项目共用。
+- Trystero 版本固定为 0.27.0，升级前请先对照新版接口。
+- 4 位房间号只有 1 万种：陌生人同时使用同一个号码会进到同一个房间，房间内容靠房间号加密，不适合保密场景。
+- 房主刷新或关掉页面，就算离开；会由下一位接任，游戏重新开始。
