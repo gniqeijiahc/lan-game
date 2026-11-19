@@ -24,6 +24,7 @@ export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, o
 
   const room = {
     names,
+    host: null,                   // 房主的 peerId（由大厅提供；房主离开后会更新）。独立打开时没有这个属性
     makeAction(ns) {
       if (!actions.has(ns)) actions.set(ns, [])
       return {
@@ -66,6 +67,7 @@ export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, o
         started = true
         selfId = m.selfId
         setNames(m.names)
+        room.host = typeof m.host === 'string' ? m.host : null
         try { if (setup) setup(room) } catch (e) { console.error(e) }
         sync(Array.isArray(m.opponents) ? m.opponents : [])
         post({t: 'ready'})
@@ -73,6 +75,7 @@ export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, o
         resolve({room, role: m.role || 'player'})
       } else if (m.t === 'peers' && started) {
         setNames(m.names)
+        if (typeof m.host === 'string') room.host = m.host     // 先更新房主，再触发进出回调，回调里读到的就是最新的
         sync(Array.isArray(m.opponents) ? m.opponents : [])
       } else if (m.t === 'msg' && started) {
         const hs = actions.get(m.ns)

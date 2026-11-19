@@ -19,6 +19,11 @@
     text-decoration:underline; cursor:pointer; touch-action:manipulation; }
 
   .err { color:var(--bad); font-size:14px; min-height:20px; margin-top:8px; }
+  .role { font-size:13px; color:var(--muted); margin:0 0 10px; }
+  .role:empty { display:none; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { padding:4px 10px; border:1px solid var(--line); border-radius:999px; font-size:13px; word-break:break-all; }
+  .chip.me { border-color:var(--accent); color:var(--accent); }
   .topline { display:flex; justify-content:space-between; gap:8px; font-size:14px; color:var(--muted); }
   .mask { font-size:30px; line-height:1.3; letter-spacing:.06em; text-align:center; font-weight:700; margin:8px 0 4px; word-break:break-all; }
   .cat { text-align:center; color:var(--accent); font-size:14px; min-height:21px; }
@@ -33,14 +38,15 @@
   .item .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
   .item .w { font-weight:600; font-size:17px; word-break:break-all; }
   .item .p { font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .item .sub { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-top:2px; }
+  .item .sub { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; gap:8px; margin-top:2px; }
+  .item .sub span:first-child { word-break:break-all; }
   .bar { height:6px; border-radius:3px; background:var(--line); overflow:hidden; margin-top:6px; }
   .bar i { display:block; height:100%; border-radius:3px; }
   .cold i { background:var(--accent); } .warm i { background:var(--warn); } .hot i { background:var(--ok); }
   .cold .p { color:var(--accent); } .warm .p { color:var(--warn); } .hot .p { color:var(--ok); }
 
   .result { text-align:center; }
-  .result .big { font-size:22px; font-weight:700; margin-bottom:6px; }
+  .result .big { font-size:22px; font-weight:700; margin-bottom:6px; word-break:break-all; }
   .result.win .big { color:var(--ok); }
   .result button { margin-top:12px; width:100%; }
   .center { text-align:center; }
@@ -52,11 +58,12 @@
   <h1>🔮 秘密词</h1>
 
   <div id="lobby"></div>
+  <div class="role" id="roleLine"></div>
 
-  <!-- 填写 Jina API Key（地址不是 api.jina.ai 时不会出现） -->
+  <!-- 填写 Jina API Key（只有主机需要；API 地址不是 api.jina.ai 时不会出现） -->
   <div class="card" id="keyCard" hidden>
-    <div><b>先填入你的 Jina API Key</b></div>
-    <div class="muted">在 jina.ai 免费申请。Key 只保存在这台设备的浏览器里，不会上传到游戏厅，也不会发给其他玩家。</div>
+    <div><b>你是主机，先填入你的 Jina API Key</b></div>
+    <div class="muted">房间里所有人猜的词，都由你的 Key 去计算，其他人不需要 Key。在 jina.ai 免费申请。Key 只保存在这台设备的浏览器里，不会发给其他玩家。</div>
     <form class="row" id="keyForm" style="margin-top:10px">
       <input type="password" id="keyInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="jina_...">
       <button class="main" type="submit">保存</button>
@@ -64,13 +71,13 @@
     <div class="err" id="keyErr"></div>
   </div>
 
-  <!-- 准备中 / 出错 -->
+  <!-- 准备中 / 出错 / 等待主机 -->
   <div class="card center" id="stateCard" hidden>
     <div id="stateText"></div>
     <button class="main" type="button" id="retry" hidden style="margin-top:10px">重试</button>
   </div>
 
-  <!-- 题目信息 -->
+  <!-- 题目信息（所有人看到的都是同一份） -->
   <div class="card" id="board" hidden>
     <div class="topline"><span id="len"></span><span id="count"></span></div>
     <div class="mask" id="mask"></div>
@@ -78,8 +85,14 @@
     <div class="hintbar">
       <button class="ghost" type="button" id="hCat">提示：类别</button>
       <button class="ghost" type="button" id="hChar">提示：揭示一个字</button>
-      <button class="ghost" type="button" id="giveUp">放弃</button>
+      <button class="ghost" type="button" id="giveUp">放弃（主机）</button>
     </div>
+  </div>
+
+  <!-- 在场玩家 -->
+  <div class="card" id="playersCard" hidden>
+    <div class="muted" style="margin-bottom:6px">一起猜的人（括号里是各自猜的次数）</div>
+    <div class="chips" id="players"></div>
   </div>
 
   <!-- 猜测输入 -->
@@ -90,7 +103,7 @@
       <button class="main" type="submit" id="guessBtn">猜</button>
     </div>
     <div class="msg" id="msg" aria-live="polite"></div>
-    <div class="muted">百分比是 AI 估算的"意思接近程度"，不是字形相似。猜得越接近，数字越高。</div>
+    <div class="muted">大家猜的是同一个词，记录是共用的。百分比是 AI 估算的"意思接近程度"，不是字形相似。</div>
   </form>
 
   <!-- 结果 -->
@@ -98,9 +111,10 @@
     <div class="big" id="resultTitle"></div>
     <div class="muted" id="resultSub"></div>
     <button class="main" type="button" id="again">再来一局</button>
+    <div class="muted" id="waitNext" style="margin-top:12px" hidden>等待主机开始下一局…</div>
   </div>
 
-  <!-- 猜测记录（按相关度从高到低） -->
+  <!-- 猜测记录（所有人的，按相关度从高到低） -->
   <div class="card" id="listCard" hidden>
     <div class="muted" style="margin-bottom:4px">猜测记录（相关度从高到低）</div>
     <div id="list"></div>
@@ -112,33 +126,66 @@
 <script type="module">
 import {CONFIG} from './config.js'
 import {allWords} from './words.js'
-import {chars, cleanGuess, validateGuess, cosine, mean, toPercent, tier, maskText, maxReveals, pickSecret, pickRefs} from './logic.js'
+import {createLobby} from '../../shared/lobby.js'
+import {chars, cleanGuess, validateGuess, cosine, mean, toPercent, tier, maxReveals, pickSecret, pickRefs,
+        MAX_GUESSES, isId, pickLeader, newSid, parseGuessMsg, parseHintMsg, parseRes, parseState, isNewer} from './logic.js'
 
 const $ = id => document.getElementById(id)
-$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+$('back').href = '../../' + location.search   // 独立打开时，返回时保留 ?s= 参数
 
 const WORDS = allWords()
 const store = {
   get(k) { try { return localStorage.getItem(k) || '' } catch { return '' } },
   set(k, v) { try { localStorage.setItem(k, v) } catch {} }
 }
-// 只有直连 Jina 时才需要玩家自己的 Key；以后改成 Cloudflare 代理地址就不需要了
+// 只有直连 Jina 时才需要主机填 Key；以后改成 Cloudflare 代理地址就不需要了
 const needsKey = (() => { try { return new URL(CONFIG.API_URL).hostname === 'api.jina.ai' } catch { return true } })()
 const getKey = () => CONFIG.API_KEY || store.get('sw:jinaKey')
 let model = CONFIG.MODEL
 
-// ---------- 状态（每次进入游戏都是全新的一局，不写入 localStorage） ----------
-const S = {
-  gen: 0,                 // 每开新局 +1，用来丢弃上一局迟到的网络结果
-  phase: 'init',          // init | needKey | loading | playing | won | gaveup | error
-  secret: null, secretVec: null, base: 0,
-  guesses: [], vecs: new Map(), last: null,
-  showCat: false, revealed: new Set(), hints: 0,
-  busy: false, showKey: false,
-  msg: '', msgCls: '', err: '', lastWord: ''
+// =====================================================================================
+// 玩法与联机方式
+//   · 房主就是"主机"：只有主机持有 Jina Key 和秘密词，每个人（含主机）猜的词都发给主机去算，
+//     主机把整局的公共状态（字数、提示、所有人的猜测与百分比）广播给大家。
+//   · 秘密词在猜出来或放弃之前不会离开主机的页面，其他人拿不到。
+//   · 公共状态每次都发完整的一份并带版本号：晚加入的人、丢了消息的人，收到下一条就追上了。
+// =====================================================================================
+
+// ---------- 公共状态：主机是权威，其他人只是镜像 ----------
+const P = {sid: '', v: 0, r: 0, ph: 'prep', len: 0, cat: '', hc: 0, ans: '', note: '', wn: -1,
+           ids: [], rv: new Map(), G: []}
+function resetPublic() {
+  Object.assign(P, {sid: '', v: 0, r: 0, ph: 'prep', len: 0, cat: '', hc: 0, ans: '', note: '', wn: -1,
+                    ids: [], rv: new Map(), G: []})
+}
+const stateMsg = () => ({t: 'st', sid: P.sid, v: P.v, r: P.r, ph: P.ph, len: P.len, cat: P.cat, hc: P.hc,
+                         ans: P.ans, note: P.note, wn: P.wn, ids: P.ids, rv: [...P.rv], G: P.G})
+function applyState(s) {
+  Object.assign(P, {sid: s.sid, v: s.v, r: s.r, ph: s.ph, len: s.len, cat: s.cat, hc: s.hc, ans: s.ans,
+                    note: s.note, wn: s.wn, ids: s.ids, rv: new Map(s.rv), G: s.G})
 }
 
-// ---------- Jina 接口 ----------
+// ---------- 只有主机用的私有状态 ----------
+const H = {gen: 0, secret: null, secretVec: null, base: 0, queue: [], current: null, working: false,
+           lastWord: '', local: null /* null | 'needKey' | 'error' */, last: new Map(), cache: new Map()}
+
+// ---------- 每个人自己的界面状态 ----------
+const U = {busy: false, pendingId: -1, pendingWord: '', timer: 0, seq: 0, msg: '', msgCls: '', err: '', showKey: false}
+
+// ---------- 联机 ----------
+let room = null, act = null, selfId = null, leader = null, booted = false
+const peers = new Set()
+const isHost = () => !!selfId && leader === selfId
+const nameOf = id => (room && room.names && room.names[id]) || (id === selfId ? '我' : '玩家' + String(id).slice(-4))
+
+function sendTo(target, msg) {
+  if (!act) return
+  try { const p = act.send(msg, target ? {target} : undefined); if (p && p.catch) p.catch(() => {}) } catch {}
+}
+function broadcast() { if (peers.size) sendTo(null, stateMsg()) }
+function bump() { P.v++; broadcast(); render() }
+
+// ---------- Jina 接口（只有主机会调用） ----------
 async function embed(texts, useModel) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 20000)
@@ -178,188 +225,410 @@ function explain(e) {
   if (s === 429) return '请求太频繁或额度用完了，稍等一会再试。'
   if (s >= 500) return 'Jina 服务暂时不可用，请稍后再试。'
   if (e instanceof TypeError) return '网络连接失败（网络不通，或被浏览器拦截）。'
-  return '出错了：' + (e && e.message || e)
+  return '出错了：' + String(e && e.message || e).slice(0, 60)
 }
 
-// ---------- 开局 ----------
-async function startGame() {
-  const gen = ++S.gen
-  Object.assign(S, {
-    secret: pickSecret(WORDS, Math.random, S.lastWord), secretVec: null, base: 0,
-    guesses: [], vecs: new Map(), last: null, showCat: false, revealed: new Set(), hints: 0,
-    busy: false, msg: '', msgCls: '', err: ''
-  })
-  S.lastWord = S.secret.word
-  if (needsKey && !getKey()) { S.phase = 'needKey'; render(); return }
-  S.phase = 'loading'; render()
+async function embedWord(word) {
+  let v = H.cache.get(word)
+  if (v) return v
+  ;[v] = await embed([word], model)
+  if (H.cache.size >= 500) H.cache.clear()
+  H.cache.set(word, v)   // 词的向量和秘密词无关，下一局还能复用
+  return v
+}
+
+// =====================================================================================
+// 主机：开局、处理猜测与提示
+// =====================================================================================
+async function startRound() {
+  if (!isHost()) return
+  const gen = ++H.gen
+  H.queue.length = 0
+  const keep = {sid: P.sid, v: P.v, r: P.r}
+  resetPublic()
+  Object.assign(P, keep)
+  P.r++
+  H.secret = pickSecret(WORDS, Math.random, H.lastWord)
+  H.lastWord = H.secret.word
+  H.secretVec = null; H.base = 0; H.local = null
+  P.len = chars(H.secret.word).length
+  P.note = '主机正在准备题目…'
+  U.msg = ''; U.msgCls = ''; U.err = ''
+  if (needsKey && !getKey()) { H.local = 'needKey'; P.note = '主机需要先填写 Jina API Key'; bump(); return }
+  bump()
   try {
     // 一次请求同时算出：秘密词的向量 + 一批"无关词"的相似度，用来把 0% 定在合适的位置
-    const refs = pickRefs(WORDS, S.secret, CONFIG.REF_COUNT)
-    const vecs = await embedSetup([S.secret.word, ...refs])
-    if (gen !== S.gen) return
-    S.secretVec = vecs[0]
-    S.base = mean(vecs.slice(1).map(v => cosine(vecs[0], v)))
-    S.phase = 'playing'
+    const refs = pickRefs(WORDS, H.secret, CONFIG.REF_COUNT)
+    const vecs = await embedSetup([H.secret.word, ...refs])
+    if (gen !== H.gen) return
+    H.secretVec = vecs[0]
+    H.base = mean(vecs.slice(1).map(v => cosine(vecs[0], v)))
+    P.ph = 'play'; P.note = ''
   } catch (e) {
-    if (gen !== S.gen) return
-    S.phase = (e.status === 401 || e.status === 403) ? 'needKey' : 'error'
-    S.err = explain(e)
+    if (gen !== H.gen) return
+    H.local = (e.status === 401 || e.status === 403) ? 'needKey' : 'error'
+    U.err = explain(e)
+    P.note = '主机这边出错了，正在等待重试'
   }
+  bump()
+  focusGuess()
+}
+
+// 回复某个人的猜测结果：主机自己的直接处理，其他人走消息
+function deliverRes(to, res) {
+  if (to === selfId) onRes(parseRes(res))
+  else sendTo(to, res)
+}
+
+// 排队：同一个人同时只排一个；主机的 API 额度有限，所以也限速限量
+function enqueueGuess(from, id, word) {
+  const reject = m => deliverRes(from, {t: 'res', id, ok: false, m})
+  if (P.ph !== 'play') return reject('这一局还没开始，或已经结束了')
+  if (H.queue.some(j => j.from === from) || (H.current && H.current.from === from)) return reject('上一个词还在计算，请稍等')
+  if (H.queue.length >= 20) return reject('主机这边排队的人太多了，请稍后再试')
+  const now = Date.now()
+  if (from !== selfId && now - (H.last.get(from) || 0) < 500) return reject('猜得太快了，慢一点')
+  H.last.set(from, now)
+  H.queue.push({from, id, word, gen: H.gen})
+  pump()
+}
+
+async function pump() {
+  if (H.working) return
+  H.working = true
+  try {
+    while (H.queue.length) {
+      const job = H.queue.shift()
+      H.current = job
+      try { await processGuess(job) }
+      catch (e) { console.error(e); deliverRes(job.from, {t: 'res', id: job.id, ok: false, m: '主机这边出错了，请再试一次'}) }
+    }
+  } finally { H.working = false; H.current = null }
+}
+
+async function processGuess({from, id, word, gen}) {
+  const fail = m => deliverRes(from, {t: 'res', id, ok: false, m})
+  if (gen !== H.gen || P.ph !== 'play' || !H.secret) return fail('这一局已经结束了')
+  const ex = P.G.find(g => g[0] === word)
+  if (ex) return deliverRes(from, {t: 'res', id, ok: false, p: ex[1], m: `「${word}」已经有人猜过了（${ex[1].toFixed(1)}%）`})
+  if (P.G.length >= MAX_GUESSES) return fail(`这一局的猜测已达 ${MAX_GUESSES} 次上限，请主机放弃后重开`)
+
+  const isSecret = word === H.secret.word
+  let pct = 100
+  if (!isSecret) {
+    let vec
+    try { vec = await embedWord(word) }
+    catch (e) {
+      if (gen !== H.gen) return
+      if (e.status === 401 || e.status === 403) { H.local = 'needKey'; U.err = explain(e); U.showKey = true; render() }
+      return fail('主机的 AI 暂时算不出来：' + explain(e).slice(0, 40))
+    }
+    if (gen !== H.gen || P.ph !== 'play') return fail('这一局已经结束了')
+    pct = Math.min(99.9, toPercent(cosine(H.secretVec, vec), H.base, CONFIG.CURVE))
+    pct = Math.round(pct * 10) / 10
+  }
+  let idx = P.ids.indexOf(from)
+  if (idx < 0) { P.ids.push(from); idx = P.ids.length - 1 }
+  P.G.push([word, pct, idx, P.G.length + 1])
+  if (isSecret) { P.ph = 'won'; P.ans = word; P.wn = idx }
+  deliverRes(from, {t: 'res', id, ok: true, p: pct, m: isSecret ? '猜对了！' : '已记录'})
+  bump()
+}
+
+function applyHint(kind) {
+  if (!isHost() || P.ph !== 'play' || !H.secret) return
+  if (kind === 'cat') {
+    if (P.cat) return
+    P.cat = H.secret.category
+  } else {
+    if (P.rv.size >= maxReveals(H.secret.word)) return
+    const cs = chars(H.secret.word)
+    const left = cs.map((_, i) => i).filter(i => !P.rv.has(i))
+    const i = left[Math.floor(Math.random() * left.length)]
+    P.rv.set(i, cs[i])
+  }
+  P.hc++
+  bump()
+}
+
+// =====================================================================================
+// 收到的联机消息（一律当作不可信数据）
+// =====================================================================================
+function onMsg(d, from) {
+  if (!d || typeof d !== 'object' || !isId(from) || from === selfId || !selfId) return
+  if (isHost()) {
+    if (!peers.has(from)) return
+    if (d.t === 'g') { const g = parseGuessMsg(d); if (g) enqueueGuess(from, g.id, g.w) }
+    else if (d.t === 'h') { const h = parseHintMsg(d); if (h) applyHint(h.k) }
+    else if (d.t === 'hi') { if (P.sid) sendTo(from, stateMsg()) }
+  } else if (from === leader) {
+    if (d.t === 'st') {
+      const s = parseState(d)
+      if (s && isNewer(P, s)) { applyState(s); render(); focusGuess() }
+    } else if (d.t === 'res') onRes(parseRes(d))
+  }
+}
+
+function onRes(res) {
+  if (!res || res.id !== U.pendingId) return
+  cancelPending()
+  if (res.ok) {
+    U.msg = `「${U.pendingWord}」相关度 ${res.p == null ? '?' : res.p.toFixed(1)}%（${tier(res.p || 0).label}）`
+    U.msgCls = (res.p || 0) >= 50 ? 'ok' : ''
+    $('guess').value = ''
+  } else { U.msg = res.m; U.msgCls = 'warn' }
   render()
   focusGuess()
 }
 
-function focusGuess() {
-  // 触屏设备不自动弹键盘
-  if (S.phase === 'playing' && matchMedia('(pointer:fine)').matches) $('guess').focus({preventScroll: true})
+function cancelPending() { clearTimeout(U.timer); U.busy = false; U.pendingId = -1 }
+
+// =====================================================================================
+// 谁是主机：房主。房主换人（或有人进出）时重新确认
+// =====================================================================================
+function syncLeader() {
+  if (!selfId) return
+  const nl = pickLeader(room && room.host, selfId, peers)
+  if (nl === leader) return
+  leader = nl
+  H.gen++; H.queue.length = 0; H.local = null     // 作废主机那边正在做的事
+  cancelPending()
+  U.msg = ''; U.msgCls = ''; U.err = ''
+  resetPublic()
+  if (leader === selfId) { P.sid = newSid(); startRound() }   // 我成了主机：新开一局（新的 sid 让别人知道换了主机）
+  else if (leader) sendTo(leader, {t: 'hi'})                  // 我不是主机：向主机要当前状态
+  render()
 }
 
-// ---------- 猜测 ----------
-async function submitGuess() {
-  if (S.phase !== 'playing' || S.busy) return
+function onJoin(id) {
+  if (!isId(id) || id === selfId || peers.has(id)) return
+  peers.add(id)
+  if (!selfId) return                                         // 还没拿到自己的 id，等 boot 统一处理
+  if (isHost() && P.sid) sendTo(id, stateMsg())               // 有人中途加入：把当前进度发给他
+  syncLeader(); render()
+}
+function onLeave(id) {
+  if (!peers.delete(id)) return
+  H.last.delete(id)
+  for (let i = H.queue.length - 1; i >= 0; i--) if (H.queue[i].from === id) H.queue.splice(i, 1)
+  if (!selfId) return
+  syncLeader(); render()
+}
+
+function boot() {
+  if (booted) return
+  booted = true
+  syncLeader()
+  render()
+  // 每 5 秒：主机重发一次当前状态（补上可能丢的消息）；还没收到状态的人再要一次
+  setInterval(() => {
+    if (isHost()) { if (peers.size && P.sid) sendTo(null, stateMsg()) }
+    else if (leader && !P.sid) sendTo(leader, {t: 'hi'})
+  }, 5000)
+}
+function soloBoot() { if (!selfId) { selfId = 'solo-' + Math.random().toString(36).slice(2, 8); boot() } }
+
+// =====================================================================================
+// 操作
+// =====================================================================================
+function focusGuess() {
+  // 触屏设备不自动弹键盘
+  if (P.ph === 'play' && !U.busy && matchMedia('(pointer:fine)').matches) $('guess').focus({preventScroll: true})
+}
+
+function say(text, cls) { U.msg = text; U.msgCls = cls || ''; $('msg').textContent = text; $('msg').className = 'msg ' + (cls || '') }
+
+function submitGuess() {
+  if (P.ph !== 'play' || U.busy || !leader) return
   const word = cleanGuess($('guess').value)
   const bad = validateGuess(word)
   if (bad) return say(bad, 'bad')
-  if (S.guesses.some(g => g.word === word)) { S.last = S.guesses.find(g => g.word === word); say('这个词已经猜过了', 'warn'); return render() }
+  const ex = P.G.find(g => g[0] === word)
+  if (ex) { say(`「${word}」已经有人猜过了（${ex[1].toFixed(1)}%）`, 'warn'); return render() }
 
-  const gen = S.gen
-  const isSecret = word === S.secret.word
-  let vec = S.vecs.get(word)
-  if (!isSecret && !vec) {
-    S.busy = true; say('', ''); render()
-    try { [vec] = await embed([word], model) }
-    catch (e) {
-      if (gen !== S.gen) return
-      S.busy = false
-      if (e.status === 401 || e.status === 403) { S.showKey = true; S.err = explain(e) }
-      say(explain(e), 'bad'); return render()
-    }
-    if (gen !== S.gen) return
-    S.vecs.set(word, vec)
-    S.busy = false
+  const id = ++U.seq
+  U.busy = true; U.pendingId = id; U.pendingWord = word
+  say('', '')
+  if (isHost()) enqueueGuess(selfId, id, word)
+  else {
+    sendTo(leader, {t: 'g', id, w: word})
+    U.timer = setTimeout(() => {                    // 主机一直不回：放开输入，让玩家可以重试
+      if (U.pendingId !== id) return
+      cancelPending(); U.msg = '主机没有响应，请稍后再试'; U.msgCls = 'warn'; render()
+    }, 25000)
   }
-
-  const cos = isSecret ? 1 : cosine(S.secretVec, vec)
-  const pct = isSecret ? 100 : Math.min(99.9, toPercent(cos, S.base, CONFIG.CURVE))
-  const g = {word, pct, n: S.guesses.length + 1}
-  S.guesses.push(g); S.last = g
-  $('guess').value = ''
-  if (isSecret) { S.phase = 'won'; say('', '') }
-  else say(`「${word}」相关度 ${pct.toFixed(1)}%（${tier(pct).label}）`, pct >= 50 ? 'ok' : '')
   render()
-  focusGuess()
 }
 
-function say(text, cls) { S.msg = text; S.msgCls = cls || ''; $('msg').textContent = text; $('msg').className = 'msg ' + (cls || '') }
-
-// ---------- 提示 ----------
-$('hCat').onclick = () => { if (S.phase === 'playing' && !S.showCat) { S.showCat = true; S.hints++; render() } }
-$('hChar').onclick = () => {
-  if (S.phase !== 'playing' || S.revealed.size >= maxReveals(S.secret.word)) return
-  const left = chars(S.secret.word).map((_, i) => i).filter(i => !S.revealed.has(i))
-  S.revealed.add(left[Math.floor(Math.random() * left.length)])
-  S.hints++; render()
+function askHint(kind) {
+  if (P.ph !== 'play') return
+  if (isHost()) applyHint(kind)
+  else sendTo(leader, {t: 'h', k: kind})
 }
-$('giveUp').onclick = () => { if (S.phase === 'playing') { S.phase = 'gaveup'; say('', ''); render() } }
-$('again').onclick = () => startGame()
-$('retry').onclick = () => startGame()
 
-// ---------- API Key ----------
-$('changeKey').onclick = () => { S.showKey = true; S.err = ''; render(); $('keyInput').focus({preventScroll: true}) }
+$('guessForm').onsubmit = e => { e.preventDefault(); submitGuess() }
+$('hCat').onclick = () => askHint('cat')
+$('hChar').onclick = () => askHint('char')
+$('giveUp').onclick = () => {
+  if (!isHost() || P.ph !== 'play' || !H.secret) return
+  P.ph = 'gave'; P.ans = H.secret.word; bump()
+}
+$('again').onclick = () => { if (isHost() && (P.ph === 'won' || P.ph === 'gave')) startRound() }
+$('retry').onclick = () => { if (isHost()) startRound() }
+
+// ---------- API Key（只有主机） ----------
+$('changeKey').onclick = () => { U.showKey = true; U.err = ''; render(); $('keyInput').focus({preventScroll: true}) }
 $('keyForm').onsubmit = e => {
   e.preventDefault()
   const key = $('keyInput').value.trim()
-  if (key.length < 10 || /\s/.test(key)) { S.err = '这看起来不像有效的 Key，请检查后再试'; return render() }
+  if (key.length < 10 || /\s/.test(key)) { U.err = '这看起来不像有效的 Key，请检查后再试'; return render() }
   store.set('sw:jinaKey', key)
   $('keyInput').value = ''
-  S.err = ''; S.showKey = false
-  if (S.phase === 'needKey' || S.phase === 'error') startGame(); else render()
+  U.err = ''; U.showKey = false
+  if (isHost() && P.ph === 'prep') startRound()        // 开局时就缺 Key / 出错：重新开始准备
+  else { H.local = null; render() }                    // 局中途 Key 失效：换好 Key 继续当前这局
 }
-$('guessForm').onsubmit = e => { e.preventDefault(); submitGuess() }
 
-// ---------- 画面 ----------
+// =====================================================================================
+// 画面
+// =====================================================================================
 function render() {
-  const p = S.phase
-  const over = p === 'won' || p === 'gaveup'
-  const inGame = p === 'playing' || over
-  const len = S.secret ? chars(S.secret.word).length : 0
+  const host = isHost()
+  const ph = P.ph
+  const over = ph === 'won' || ph === 'gave'
+  const inGame = ph === 'play' || over
+  const mask = () => Array.from({length: P.len}, (_, i) => P.rv.has(i) ? P.rv.get(i) : '○').join(' ')
 
-  const keyVisible = needsKey && (p === 'needKey' || S.showKey)
+  // 角色说明
+  let role = '正在连接…'
+  if (selfId && leader) {
+    if (host) role = peers.size ? '👑 你是主机：所有人猜的词都用你的 Jina API 计算，其他人不需要 Key' : '👑 你是主机：目前只有你一个人，其他人加入后会一起猜同一个词'
+    else role = `由主机「${nameOf(leader)}」的 AI 计算相似度，你不需要 API Key`
+  }
+  $('roleLine').textContent = role
+
+  // 主机的 Key 卡片 / 状态卡片
+  const keyVisible = host && needsKey && (H.local === 'needKey' || U.showKey)
   $('keyCard').hidden = !keyVisible
-  $('keyErr').textContent = keyVisible ? S.err : ''
-  $('changeKey').hidden = !(needsKey && !CONFIG.API_KEY && !keyVisible && inGame)
+  $('keyErr').textContent = keyVisible ? U.err : ''
+  $('changeKey').hidden = !(host && needsKey && !CONFIG.API_KEY && !keyVisible && inGame)
 
-  $('stateCard').hidden = !(p === 'loading' || p === 'error')
-  $('stateText').textContent = p === 'loading' ? '正在准备题目…' : S.err
-  $('retry').hidden = p !== 'error'
+  const hostFailed = host && H.local === 'error'
+  const waiting = !inGame && !keyVisible
+  $('stateCard').hidden = !waiting
+  if (waiting) {
+    $('stateText').textContent = hostFailed ? U.err
+      : host ? '正在准备题目…'
+      : !P.sid ? (leader ? '正在等待主机出题…' : '正在连接…')
+      : (P.note || '主机正在准备题目…')
+  }
+  $('retry').hidden = !(waiting && hostFailed)
 
+  // 题目
   $('board').hidden = !inGame
-  $('len').textContent = len ? `这个词一共 ${len} 个字` : ''
-  $('count').textContent = `已猜 ${S.guesses.length} 次 · 提示 ${S.hints} 次`
-  if (S.secret) $('mask').textContent = over ? chars(S.secret.word).join(' ') : maskText(S.secret.word, S.revealed)
-  $('catLine').textContent = S.secret && (S.showCat || over) ? `类别：${S.secret.category}` : ''
-  const left = S.secret ? maxReveals(S.secret.word) - S.revealed.size : 0
-  $('hCat').disabled = p !== 'playing' || S.showCat
-  $('hChar').disabled = p !== 'playing' || left <= 0
+  $('len').textContent = P.len ? `这个词一共 ${P.len} 个字` : ''
+  $('count').textContent = `已猜 ${P.G.length} 次 · 提示 ${P.hc} 次`
+  $('mask').textContent = over ? chars(P.ans).join(' ') : mask()
+  $('catLine').textContent = P.cat ? `类别：${P.cat}` : ''
+  const left = maxReveals('x'.repeat(P.len || 4)) - P.rv.size
+  $('hCat').disabled = ph !== 'play' || !!P.cat
+  $('hChar').disabled = ph !== 'play' || left <= 0
   $('hChar').textContent = `提示：揭示一个字（剩 ${Math.max(left, 0)} 次）`
-  $('giveUp').disabled = p !== 'playing'
+  $('giveUp').hidden = !host
+  $('giveUp').disabled = ph !== 'play'
 
-  $('guessForm').hidden = p !== 'playing'
-  $('guess').disabled = S.busy
-  $('guessBtn').disabled = S.busy
-  $('guessBtn').textContent = S.busy ? '计算中…' : '猜'
-  $('msg').textContent = S.msg; $('msg').className = 'msg ' + S.msgCls
+  // 在场玩家：主机在最前
+  renderPlayers(inGame)
 
+  // 猜测输入
+  $('guessForm').hidden = ph !== 'play'
+  $('guess').disabled = U.busy
+  $('guessBtn').disabled = U.busy
+  $('guessBtn').textContent = U.busy ? '计算中…' : '猜'
+  $('msg').textContent = U.msg; $('msg').className = 'msg ' + U.msgCls
+
+  // 结果
   $('resultCard').hidden = !over
-  $('resultCard').className = 'card result' + (p === 'won' ? ' win' : '')
+  $('resultCard').className = 'card result' + (ph === 'won' ? ' win' : '')
   if (over) {
-    if (p === 'won') {
-      $('resultTitle').textContent = `🎉 猜对了！答案是「${S.secret.word}」`
-      $('resultSub').textContent = `一共猜了 ${S.guesses.length} 次，用了 ${S.hints} 次提示`
+    const sum = `一共猜了 ${P.G.length} 次，用了 ${P.hc} 次提示`
+    if (ph === 'won') {
+      const who = P.wn >= 0 ? P.ids[P.wn] : null
+      $('resultTitle').textContent = `🎉 ${who ? (who === selfId ? '你' : nameOf(who)) : '有人'}猜对了！答案是「${P.ans}」`
+      $('resultSub').textContent = sum
     } else {
-      $('resultTitle').textContent = `答案是「${S.secret.word}」`
-      const best = S.guesses.reduce((m, g) => (!m || g.pct > m.pct ? g : m), null)
-      $('resultSub').textContent = best ? `你最接近的是「${best.word}」（${best.pct.toFixed(1)}%），下次加油！` : '下次加油！'
+      $('resultTitle').textContent = `主机放弃了，答案是「${P.ans}」`
+      const best = P.G.reduce((m, g) => (!m || g[1] > m[1] ? g : m), null)
+      $('resultSub').textContent = best ? `最接近的是「${best[0]}」（${best[1].toFixed(1)}%，${nameOf(P.ids[best[2]])}猜的），下次加油！` : '下次加油！'
     }
   }
+  $('again').hidden = !host
+  $('waitNext').hidden = host
 
-  $('listCard').hidden = !S.guesses.length
+  $('listCard').hidden = !P.G.length
   renderList()
+}
+
+function renderPlayers(show) {
+  const card = $('playersCard'), box = $('players')
+  card.hidden = !(show && selfId && leader)
+  box.textContent = ''
+  if (card.hidden) return
+  const others = [...new Set([selfId, ...peers])].filter(id => id !== leader).sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'zh'))
+  for (const id of [leader, ...others]) {
+    const n = P.G.filter(g => P.ids[g[2]] === id).length
+    const chip = document.createElement('span')
+    chip.className = 'chip' + (id === selfId ? ' me' : '')
+    chip.textContent = `${id === leader ? '👑 ' : ''}${nameOf(id)}${id === selfId ? '（你）' : ''}（${n}）`
+    box.appendChild(chip)
+  }
 }
 
 function renderList() {
   const box = $('list')
   box.textContent = ''
-  const sorted = [...S.guesses].sort((a, b) => b.pct - a.pct)
-  for (const g of sorted) {
-    const t = tier(g.pct)
+  const newest = P.G.reduce((m, g) => Math.max(m, g[3]), 0)
+  const sorted = [...P.G].sort((a, b) => b[1] - a[1] || a[3] - b[3])
+  for (const [word, pct, by, n] of sorted) {
+    const t = tier(pct)
     const item = document.createElement('div')
-    item.className = `item ${t.cls}` + (g === S.last ? ' new' : '')
+    item.className = `item ${t.cls}` + (n === newest ? ' new' : '')
     const top = document.createElement('div'); top.className = 'top'
-    const w = document.createElement('span'); w.className = 'w'; w.textContent = g.word
-    const pc = document.createElement('span'); pc.className = 'p'; pc.textContent = (g.pct >= 100 ? '100' : g.pct.toFixed(1)) + '%'
+    const w = document.createElement('span'); w.className = 'w'; w.textContent = word
+    const pc = document.createElement('span'); pc.className = 'p'; pc.textContent = (pct >= 100 ? '100' : pct.toFixed(1)) + '%'
     top.append(w, pc)
     const bar = document.createElement('div'); bar.className = 'bar'
-    const fill = document.createElement('i'); fill.style.width = Math.max(g.pct, 1.5) + '%'
+    const fill = document.createElement('i'); fill.style.width = Math.max(pct, 1.5) + '%'
     bar.appendChild(fill)
+    const who = P.ids[by]
     const sub = document.createElement('div'); sub.className = 'sub'
-    const a = document.createElement('span'); a.textContent = g.pct >= 100 ? '🎉 就是它！' : t.label
-    const b = document.createElement('span'); b.textContent = '第 ' + g.n + ' 次'
+    const a = document.createElement('span')
+    a.textContent = (pct >= 100 ? '🎉 就是它！' : t.label) + (who ? ` · ${who === selfId ? '你' : nameOf(who)}` : '')
+    const b = document.createElement('span'); b.textContent = '第 ' + n + ' 次'
     sub.append(a, b)
     item.append(top, bar, sub)
     box.appendChild(item)
   }
 }
 
-// ---------- 启动 ----------
-// 被大厅内嵌时：只和大厅握手，好让 iframe 自动撑高。本游戏是单人玩法，不收发联机消息，
-// 房间里每个人各自抽自己的秘密词、各玩各的。
-if (new URLSearchParams(location.search).get('embed') === '1' && window.parent !== window) {
-  import('../../shared/lobby.js')
-    .then(m => m.createLobby({gameId: 'secret-word', container: $('lobby'), setup() {}}))
-    .catch(e => console.error(e))
-}
-startGame()
+// =====================================================================================
+// 启动：通过大厅联机。独立打开时自己建房（扫码）；联机库加载不了就当作单人玩
+// =====================================================================================
+render()
+const lobby = await createLobby({
+  gameId: 'secret-word',
+  container: $('lobby'),
+  maxPlayers: 10,
+  onPeerJoin: onJoin,
+  onPeerLeave: onLeave,
+  setup(r) {
+    room = r
+    act = r.makeAction('sw')
+    act.onMessage((d, meta) => onMsg(d, meta && meta.peerId))
+    Promise.resolve(r.getSelf()).then(s => { selfId = s.peerId; boot() }).catch(soloBoot)
+  }
+})
+if (!lobby && !selfId) soloBoot()
 </script>
 </body>
 </html>
