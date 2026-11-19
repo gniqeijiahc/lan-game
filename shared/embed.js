@@ -5,7 +5,7 @@
 // 另外，当房间里有观战者时，大厅会让"第一位玩家"的页面定时把自己的画面拍成快照，
 // 转发给观战者（见文末 startMirror）。
 
-export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave}) {
+export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave, onPeerJoin, onPeerLeave}) {
   document.documentElement.classList.add('embed')
   if (container) container.hidden = true
 
@@ -13,10 +13,17 @@ export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, o
   const actions = new Map()
   const joinH = [], leaveH = []
   const have = new Set()        // 当前在场的对手
+  const names = {}              // 大厅里的昵称 {peerId: 昵称}（含自己）；多人游戏用 room.names 显示玩家名
   let opp = null                // 第一位对手（和单页模式的行为一致）
   let selfId = null, started = false
 
+  const setNames = o => {
+    if (!o || typeof o !== 'object') return
+    for (const [k, v] of Object.entries(o)) if (typeof v === 'string') names[k] = v.slice(0, 12)
+  }
+
   const room = {
+    names,
     makeAction(ns) {
       if (!actions.has(ns)) actions.set(ns, [])
       return {
@@ -37,12 +44,14 @@ export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, o
       if (list.includes(id)) continue
       have.delete(id)
       leaveH.forEach(h => h({peerId: id}))
+      if (onPeerLeave) onPeerLeave(id)
       if (id === opp) { opp = null; if (onOpponentLeave) onOpponentLeave() }
     }
     for (const id of list) {
       if (have.has(id)) continue
       have.add(id)
       joinH.forEach(h => h({peerId: id}))
+      if (onPeerJoin) onPeerJoin(id)
       if (!opp) { opp = id; if (onOpponentJoin) onOpponentJoin(id) }
     }
     if (!opp && have.size) { opp = [...have][0]; if (onOpponentJoin) onOpponentJoin(opp) }
@@ -56,12 +65,14 @@ export function createEmbeddedLobby({gameId, container, setup, onOpponentJoin, o
       if (m.t === 'init' && !started) {
         started = true
         selfId = m.selfId
+        setNames(m.names)
         try { if (setup) setup(room) } catch (e) { console.error(e) }
         sync(Array.isArray(m.opponents) ? m.opponents : [])
         post({t: 'ready'})
         watchHeight()
         resolve({room, role: m.role || 'player'})
       } else if (m.t === 'peers' && started) {
+        setNames(m.names)
         sync(Array.isArray(m.opponents) ? m.opponents : [])
       } else if (m.t === 'msg' && started) {
         const hs = actions.get(m.ns)

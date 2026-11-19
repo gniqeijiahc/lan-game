@@ -136,6 +136,7 @@ function unmountStage() {
 
 const toFrame = m => { if (frame && frame.contentWindow) frame.contentWindow.postMessage(m, location.origin) }
 const opponentsOf = s => s.session.players.filter(id => id !== s.selfId)
+const namesOf = s => Object.fromEntries(s.members.map(m => [m.id, m.name]))   // 多人游戏用它显示玩家昵称
 const spectatorsOf = s => s.members.map(m => m.id).filter(id => !s.session.players.includes(id))
 
 function renderPlay(s, g) {
@@ -157,7 +158,7 @@ function renderPlay(s, g) {
   }
   if (isPlayer) {
     const opp = JSON.stringify(opponentsOf(s))
-    if (frameReady && opp !== lastOpp) { lastOpp = opp; toFrame({t: 'peers', opponents: opponentsOf(s)}) }
+    if (frameReady && opp !== lastOpp) { lastOpp = opp; toFrame({t: 'peers', opponents: opponentsOf(s), names: namesOf(s)}) }
     syncMirrorFlag(s)
   }
 }
@@ -244,7 +245,7 @@ window.addEventListener('message', ev => {
   const s = snap
   if (m.t === 'hello') {
     frameReady = false
-    toFrame({t: 'init', selfId: s.selfId, opponents: opponentsOf(s), role: 'player'})
+    toFrame({t: 'init', selfId: s.selfId, opponents: opponentsOf(s), names: namesOf(s), role: 'player'})
     lastOpp = JSON.stringify(opponentsOf(s))
   } else if (m.t === 'ready') {
     frameReady = true

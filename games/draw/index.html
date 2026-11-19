@@ -6,11 +6,18 @@
 <title>你画我猜</title>
 <link rel="stylesheet" href="../../shared/style.css">
 <style>
-  .score { display:flex; justify-content:space-around; text-align:center; align-items:center; }
-  .score b { display:block; font-size:28px; line-height:1.2; }
-  .score span { font-size:13px; color:var(--muted); }
-  .score .mid { font-size:14px; color:var(--muted); }
-  .score .mid strong { display:block; color:var(--text); font-size:15px; }
+  .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+  .top strong { font-size:16px; }
+  .top span { font-size:14px; color:var(--muted); }
+
+  #board { list-style:none; margin:0 0 6px; padding:0; display:grid; gap:6px;
+    grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); }
+  #board li { display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--line);
+    border-radius:10px; font-size:14px; min-width:0; }
+  #board li.me { border-color:var(--accent); background:rgba(47,111,237,.07); }
+  #board .st { width:18px; text-align:center; flex:none; }
+  #board .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #board b { font-variant-numeric:tabular-nums; }
 
   .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin:10px 0 2px; }
   .bar i { display:block; height:100%; width:100%; background:var(--accent); transition:width .25s linear; }
@@ -46,8 +53,10 @@
   #gform button { padding:12px 18px; border:0; border-radius:10px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
 
   #guesses { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
-  .chip { padding:2px 10px; border-radius:999px; font-size:14px; background:var(--line); }
+  .chip { padding:2px 10px; border-radius:999px; font-size:14px; background:var(--line); max-width:100%;
+    overflow:hidden; text-overflow:ellipsis; }
   .chip.me { background:rgba(47,111,237,.15); color:var(--accent); }
+  .chip.ok { background:rgba(26,155,82,.15); color:var(--ok); }
 
   #pick { display:grid; gap:10px; margin-top:6px; }
   .wbtn { display:flex; justify-content:space-between; align-items:center; padding:14px 16px;
@@ -65,18 +74,15 @@
   <div id="lobby"></div>
 
   <div class="card" id="game">
-    <div class="score">
-      <div><b id="sMe">0</b><span>我</span></div>
-      <div class="mid"><strong id="roundTxt">第 1 局</strong><span id="roleTxt"></span></div>
-      <div><b id="sThem">0</b><span>对方</span></div>
-    </div>
+    <div class="top"><strong id="roundTxt">准备中</strong><span id="roleTxt"></span></div>
+    <ul id="board"></ul>
 
     <div id="timer" hidden>
       <div class="bar" id="bar"><i id="barFill"></i></div>
       <div id="timeTxt"></div>
     </div>
 
-    <div id="banner">等对方加入…</div>
+    <div id="banner">等其他玩家加入…</div>
     <div id="sub"></div>
 
     <div id="pick" hidden></div>
@@ -91,7 +97,7 @@
       <div id="guesses"></div>
     </div>
   </div>
-  <div class="muted">轮流画和猜：画的人从 3 个词里选一个，限时 90 秒，不能写字。猜对双方都得分，越快越高。</div>
+  <div class="muted">2–10 人轮流当画手：画的人从 3 个词里选一个，限时 90 秒，不能写字。其他人都来猜，猜得越快分越高；每有一人猜对，画的人也加分。全员猜对或时间到就换下一位。中途也可以加入。</div>
 </main>
 
 <script type="module">
@@ -133,27 +139,55 @@ function pickCandidates() {
   return out
 }
 
+// ================= 常量与小工具 =================
+const DUR = 90                    // 每局画画秒数
+const PICK_SEC = 30               // 画手选词时限（超时自动选第一个）
+const RESULT_MS = 4000            // 每局结束后停留多久再换下一位
+const GRACE_MS = 1500             // 刚进来时等多久，看有没有人发来"当前进度"，没有才自己开新局
+const W = 800, H = 600            // 画布逻辑尺寸（各端一致，坐标按它传）
+
+const isId = x => typeof x === 'string' && x.length > 0 && x.length < 100
+const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? +v : lo))
+const str = (v, n) => String(v ?? '').slice(0, n)
+const safeColor = c => /^#[0-9a-f]{3,8}$/i.test(c) ? c : '#000000'
+const quiet = p => { if (p && p.catch) p.catch(() => {}) }
+
 // ================= 状态 =================
-const DUR = 90                    // 每局秒数
-const W = 800, H = 600            // 画布逻辑尺寸（两边一致，坐标按它传）
-let opp = null, ctlAct = null, drawAct = null
+// 每一局只有一位"画手"，他是这一局的权威（选词、判对错、结束本局）；其余人都是猜的人。
+// 画手按玩家 id 排序轮流当，所有人各自算出同样的顺序，不需要协商。
+let room = null, selfId = null, ctlAct = null, drawAct = null
+const peers = new Set()           // 房间里的其他玩家
+const scores = new Map()          // id -> 分数
+const solved = new Set()          // 本局已经猜对的人
+const lastTry = new Map()         // 画手端：每人上次猜词时间（防刷屏）
 
-let myRoll = Math.random(), theirRoll = null
-let started = false, firstDrawer = false
-let round = 0, role = null        // role: 'draw' | 'guess'
-let phase = 'wait'                // wait | pair | pick | draw | result
-let score = {me: 0, them: 0}
-let word = null                   // 只有画的人知道 {text, alts, cat}
+let started = false
+let round = 0, drawer = null
+let phase = 'wait'                // wait | pick | draw | result
+let word = null                   // 只有画手知道 {text, alts, cat}
 let info = {len: 0, cat: '', ch: null}
-let result = null
-let endsAt = 0, hintSent = false
+let result = null                 // {why, word, n}
+let endsAt = 0, pickEnds = 0, hintSent = false
 let candidates = []
-let guesses = []
-let tickId = null, nextTimer = null
+let feed = []                     // 猜词记录
+let replaySrc = null              // 中途加入时，给我补发笔迹的人
+let tickId = null, nextTimer = null, startTimer = null
 
-const sendCtl  = d => ctlAct  && ctlAct.send(d).catch(() => {})
-const sendDraw = d => drawAct && drawAct.send({r: round, ...d}).catch(() => {})
-const roleOf = r => ((r % 2 === 1) === firstDrawer) ? 'draw' : 'guess'
+const isDrawer = () => drawer === selfId
+const canDraw = () => isDrawer() && phase === 'draw'
+const players = () => (selfId ? [selfId, ...peers] : [...peers]).sort()
+const scoreOf = id => scores.get(id) || 0
+const award = (id, n) => { if (isId(id)) scores.set(id, scoreOf(id) + n) }
+const nextDrawer = after => { const ids = players(); return ids.find(id => id > after) || ids[0] }
+const nameOf = id => {
+  const n = room && room.names && room.names[id]       // 昵称由大厅提供（独立打开时没有，就用序号）
+  if (n) return n
+  const i = players().indexOf(id)
+  return '玩家' + (i >= 0 ? i + 1 : '?')
+}
+
+const sendCtl  = (d, target) => ctlAct  && quiet(ctlAct.send(d, target ? {target} : undefined))
+const sendDraw = (d, target) => drawAct && quiet(drawAct.send({r: round, ...d}, target ? {target} : undefined))
 
 // ================= 画布 =================
 const cv = $('cv'), ctx = cv.getContext('2d')
@@ -174,7 +208,6 @@ function drawStroke(s, fromPt) {            // 从第 fromPt 个点开始补画
 function redraw() { clearCanvas(); strokes.forEach(s => drawStroke(s, 0)) }
 function resetCanvas() { strokes = []; cur = null; pending = []; clearTimeout(flushT); flushT = null; clearCanvas() }
 
-const canDraw = () => role === 'draw' && phase === 'draw'
 const pos = e => { const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) * W / r.width), Math.round((e.clientY - r.top) * H / r.height)] }
 function flush() { flushT = null; if (pending.length) { sendDraw({k: 'p', p: pending}); pending = [] } }
 
@@ -198,6 +231,15 @@ cv.addEventListener('pointermove', e => {
 const endStroke = () => { if (!cur) return; clearTimeout(flushT); flush(); cur = null }
 cv.addEventListener('pointerup', endStroke)
 cv.addEventListener('pointercancel', endStroke)
+
+// 有人中途加入：把现有的笔迹按"开始一笔 + 若干段"的格式重发给他（单条消息保持很小）
+function replayTo(id) {
+  for (const s of strokes) {
+    if (s.p.length < 2) continue
+    sendDraw({k: 's', c: s.c, w: s.w, x: s.p[0], y: s.p[1], rp: 1}, id)
+    for (let i = 2; i < s.p.length; i += 300) sendDraw({k: 'p', p: s.p.slice(i, i + 300), rp: 1}, id)
+  }
+}
 
 // ================= 工具栏 =================
 const COLORS = ['#1d2433', '#d6453d', '#f59e0b', '#1a9b52', '#2f6fed', '#8b5cf6', '#8b5a2b']
@@ -224,7 +266,7 @@ function buildTools() {
   mk('🧽 橡皮', '', () => { tool.eraser = !tool.eraser; syncTools() }, 'bEraser')
   mk('↩️ 撤销', '', () => { if (!canDraw() || cur) return; strokes.pop(); redraw(); sendDraw({k: 'u'}) })
   mk('🗑 清空', '', () => { if (!canDraw() || cur) return; strokes = []; redraw(); sendDraw({k: 'c'}) })
-  mk('放弃这题', 'danger', () => { if (canDraw()) finishRound(false, 'giveup') })
+  mk('放弃这题', 'danger', () => { if (canDraw()) finishRound('giveup') })
   syncTools()
 }
 function syncTools() {
@@ -236,143 +278,186 @@ buildTools()
 
 // ================= 流程 =================
 function stopTick() { clearInterval(tickId); tickId = null }
+function startTick() { stopTick(); tickId = setInterval(tick, 250); tick() }
+
+// 人数不够（只剩自己）时回到等待状态；有人进来再重新开始，分数清零
 function resetGame() {
-  clearTimeout(nextTimer); stopTick()
-  started = false; theirRoll = null; myRoll = Math.random()
-  round = 0; role = null; phase = opp ? 'pair' : 'wait'
-  score = {me: 0, them: 0}; word = null; result = null; guesses = []; candidates = []
+  clearTimeout(nextTimer); clearTimeout(startTimer); startTimer = null; stopTick()
+  started = false; round = 0; drawer = null; phase = 'wait'
+  scores.clear(); solved.clear(); lastTry.clear()
+  word = null; result = null; feed = []; candidates = []; replaySrc = null
   used.clear(); resetCanvas(); render()
 }
 
-function sendHello(ack) { sendCtl({t: 'hello', r: myRoll, ack}) }
-function tryStart() {
-  if (started || theirRoll == null) return
-  if (theirRoll === myRoll) { myRoll = Math.random(); theirRoll = null; sendHello(false); return }   // 几乎不会发生
-  started = true
-  firstDrawer = myRoll > theirRoll        // 随机数大的先画，两边各自算出一致的结果
-  enterRound(1)
+// 刚进来的人先等一小会儿：如果游戏已经在进行，会有人发来"当前进度"，直接接上；没有才自己开第 1 局
+function maybeStart() {
+  if (started || startTimer || !selfId || players().length < 2) return
+  startTimer = setTimeout(() => {
+    startTimer = null
+    if (started || players().length < 2) return
+    started = true
+    enterRound(1, players()[0])
+  }, GRACE_MS)
 }
 
-function enterRound(r) {
+function enterRound(r, d) {
   clearTimeout(nextTimer); stopTick()
-  round = r; role = roleOf(r); phase = 'pick'
-  word = null; result = null; guesses = []; hintSent = false
+  round = r; drawer = d; phase = 'pick'
+  word = null; result = null; feed = []; hintSent = false
+  solved.clear(); lastTry.clear()
   info = {len: 0, cat: '', ch: null}
+  pickEnds = Date.now() + PICK_SEC * 1000
   resetCanvas()
-  candidates = role === 'draw' ? pickCandidates() : []
-  render()
+  candidates = d === selfId ? pickCandidates() : []
+  startTick(); render()
+  if (d === selfId) sendCtl({t: 'turn', r})        // 轮到我了：马上告诉大家（让锁屏/切后台落后的人也能立刻跟上）
 }
 
 function chooseWord(i) {
-  if (role !== 'draw' || phase !== 'pick' || !candidates[i]) return
+  if (!isDrawer() || phase !== 'pick' || !candidates[i]) return
   word = candidates[i]; used.add(word.text)
+  info = {len: word.text.length, cat: word.cat, ch: null}
   endsAt = Date.now() + DUR * 1000
   phase = 'draw'
   sendCtl({t: 'round', r: round, len: word.text.length, cat: word.cat, dur: DUR})
-  startTick(); render()
+  tick(); render()
 }
 
-function startTick() { stopTick(); tickId = setInterval(tick, 250); tick() }
 function tick() {
+  const now = Date.now()
+  if (phase === 'pick') {
+    if (isDrawer()) { if (now >= pickEnds) chooseWord(0) }
+    else if (now > pickEnds + 15000) applyEnd({r: round, why: 'skip', word: '?', n: 0})   // 兜底：画手一直没动静
+    return
+  }
   if (phase !== 'draw') return
-  const total = DUR * 1000, leftMs = Math.max(0, endsAt - Date.now()), left = Math.ceil(leftMs / 1000)
+  const total = DUR * 1000, leftMs = Math.max(0, endsAt - now), left = Math.ceil(leftMs / 1000)
   $('barFill').style.width = (leftMs / total * 100) + '%'
   $('bar').classList.toggle('low', left <= 15)
   $('timeTxt').textContent = `剩余 ${left} 秒`
-  if (role === 'draw') {
-    if (!hintSent && leftMs <= total / 2) { hintSent = true; sendCtl({t: 'hint', r: round, ch: word.text[0]}) }
-    if (leftMs === 0) finishRound(false, 'timeout')
-  } else if (Date.now() > endsAt + 5000) {
-    applyEnd({r: round, ok: false, why: 'timeout', word: '?', g: 0, d: 0})   // 兜底：对方的结束消息丢了
+  if (isDrawer()) {
+    if (!hintSent && leftMs <= total / 2) { hintSent = true; info.ch = word.text[0]; sendCtl({t: 'hint', r: round, ch: word.text[0]}); render() }
+    if (leftMs === 0) finishRound('timeout')
+  } else if (now > endsAt + 5000) {
+    applyEnd({r: round, why: 'timeout', word: '?', n: solved.size})   // 兜底：画手的结束消息丢了
   }
 }
 
-const norm = s => String(s).toLowerCase().replace(/[\s\u3000，。,.!！?？、~～·'"“”‘’]/g, '')
+const norm = s => String(s).toLowerCase().replace(/[\s　，。,.!！?？、~～·'"“”‘’]/g, '')
 const isRight = text => [word.text, ...word.alts].map(norm).includes(norm(text))
 
-// 画的人是权威：由他判定对错、结束本局
-function finishRound(ok, why) {
-  if (role !== 'draw' || phase !== 'draw') return
-  const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))
-  const msg = {t: 'end', r: round, ok, why, word: word.text, g: ok ? 10 + Math.floor(left / 10) : 0, d: ok ? 5 : 0}
+// 画手是权威：由他结束本局，并把最新的分数表发给大家
+function finishRound(why) {
+  if (!isDrawer() || phase !== 'draw') return
+  const msg = {t: 'end', r: round, why, word: word.text, n: solved.size, scores: Object.fromEntries(scores)}
   sendCtl(msg); applyEnd(msg)
 }
 function applyEnd(d) {
-  if (phase !== 'draw') return
+  if (phase !== 'draw' && phase !== 'pick') return
   stopTick(); endStroke()
   phase = 'result'
-  if (role === 'guess') { score.me += d.g; score.them += d.d } else { score.me += d.d; score.them += d.g }
-  result = {ok: d.ok, why: d.why, word: d.word, g: d.g, d: d.d}
+  if (d.scores && typeof d.scores === 'object') {
+    for (const [id, v] of Object.entries(d.scores)) if (isId(id)) scores.set(id, Math.round(num(v, 0, 99999)))
+  }
+  result = {why: str(d.why, 12), word: str(d.word ?? '?', 20), n: Math.round(num(d.n, 0, 20))}
   render()
-  nextTimer = setTimeout(() => enterRound(round + 1), 4000)
+  clearTimeout(nextTimer)
+  nextTimer = setTimeout(() => enterRound(round + 1, nextDrawer(drawer)), RESULT_MS)
+}
+function checkAllSolved() {
+  if (!isDrawer() || phase !== 'draw') return
+  const guessers = players().filter(id => id !== selfId)
+  if (guessers.length && guessers.every(id => solved.has(id))) finishRound('all')
 }
 
 // ================= 渲染 =================
+function pushFeed(item) { feed.push(item); if (feed.length > 40) feed.shift() }
+
 function render() {
-  $('sMe').textContent = score.me
-  $('sThem').textContent = score.them
+  const n = players().length
   $('roundTxt').textContent = round ? `第 ${round} 局` : '准备中'
-  $('roleTxt').textContent = !round ? '' : role === 'draw' ? '🖌️ 你来画' : '🤔 你来猜'
+  $('roleTxt').textContent = !round || !drawer ? '' : isDrawer() ? '🖌️ 你来画' : `🤔 ${nameOf(drawer)} 在画`
+  renderBoard()
 
   const banner = $('banner'), sub = $('sub')
   banner.className = ''; sub.textContent = ''
   const pickBox = $('pick')
-  pickBox.hidden = !(phase === 'pick' && role === 'draw')
+  const iSolved = solved.has(selfId)
+  pickBox.hidden = !(phase === 'pick' && isDrawer())
   $('stage').hidden = !(phase === 'draw' || phase === 'result')
   $('timer').hidden = phase !== 'draw'
   $('tools').hidden = !canDraw()
-  $('gform').hidden = !(role === 'guess' && phase === 'draw')
+  $('gform').hidden = !(phase === 'draw' && !isDrawer() && !iSolved)
   cv.classList.toggle('can', canDraw())
 
-  if (phase === 'wait') banner.textContent = '等对方加入…'
-  else if (phase === 'pair') banner.textContent = '正在分配角色…'
-  else if (phase === 'pick') {
-    if (role === 'draw') {
+  if (phase === 'wait') {
+    banner.textContent = n < 2 ? '等其他玩家加入…' : '正在准备…'
+    sub.textContent = n < 2 ? '至少需要 2 人，最多 10 人，中途也能加入' : ''
+  } else if (phase === 'pick') {
+    if (isDrawer()) {
       banner.textContent = '选一个词来画'
-      sub.textContent = '对方看不到这几个词'
+      sub.textContent = `别人看不到这几个词 · ${PICK_SEC} 秒内选好，超时自动选第一个`
       pickBox.innerHTML = ''
       candidates.forEach((w, i) => {
         const b = document.createElement('button'); b.type = 'button'; b.className = 'wbtn'
-        const n = document.createElement('b'); n.textContent = w.text
+        const t = document.createElement('b'); t.textContent = w.text
         const c = document.createElement('span'); c.textContent = w.cat
-        b.append(n, c); b.onclick = () => chooseWord(i); pickBox.appendChild(b)
+        b.append(t, c); b.onclick = () => chooseWord(i); pickBox.appendChild(b)
       })
       const rr = document.createElement('button'); rr.type = 'button'; rr.id = 'reroll'; rr.textContent = '🔄 换一批'
       rr.onclick = () => { candidates = pickCandidates(); render() }
       pickBox.appendChild(rr)
     } else {
-      banner.textContent = '对方正在选词…'
+      banner.textContent = `${nameOf(drawer)} 正在选词…`
       sub.textContent = '准备好猜吧'
     }
   } else if (phase === 'draw') {
-    if (role === 'draw') {
+    const need = Math.max(0, n - 1)
+    if (isDrawer()) {
       banner.innerHTML = '请画：<span class="word"></span>'
       banner.querySelector('.word').textContent = word.text
-      sub.textContent = `类别：${word.cat} · 不要写字哦`
+      sub.textContent = `类别：${word.cat} · 不要写字哦 · 已有 ${solved.size}/${need} 人猜对`
+    } else if (iSolved) {
+      banner.className = 'ok'
+      banner.textContent = '✅ 你猜对了！'
+      sub.textContent = `已有 ${solved.size}/${need} 人猜对 · 等其他人…`
     } else {
       const chars = Array.from({length: info.len}, (_, i) => (i === 0 && info.ch) ? info.ch : '＿')
       banner.textContent = chars.join(' ')
-      sub.textContent = `${info.len} 个字 · 类别：${info.cat}` + (info.ch ? ' · 已提示首字' : '')
+      sub.textContent = `${info.len} 个字 · 类别：${info.cat}` + (info.ch ? ' · 已提示首字' : '') + ` · 已有 ${solved.size}/${need} 人猜对`
     }
   } else if (phase === 'result') {
-    const gain = role === 'guess' ? result.g : result.d
-    if (result.ok) {
-      banner.className = 'ok'
-      banner.textContent = `✅ 答对了！答案：${result.word}`
-      sub.textContent = `你 +${gain} 分，马上轮到${role === 'draw' ? '你猜' : '你画'}…`
-    } else {
-      banner.className = 'bad'
-      banner.textContent = (result.why === 'giveup' ? '这题放弃了' : '⏰ 时间到') + `，答案：${result.word}`
-      sub.textContent = `马上轮到${role === 'draw' ? '你猜' : '你画'}…`
-    }
+    const WHY = {all: '🎉 全员猜对了', timeout: '⏰ 时间到', giveup: '这题放弃了', left: '画画的人离开了', skip: '没人选词，跳过这一局'}
+    const ans = result.word && result.word !== '?' ? `，答案：${result.word}` : ''
+    banner.className = result.n > 0 ? 'ok' : 'bad'
+    banner.textContent = (WHY[result.why] || '本局结束') + ans
+    const nx = nextDrawer(drawer)
+    sub.textContent = `${result.n} 人猜对 · 马上轮到${nx === selfId ? '你' : ' ' + nameOf(nx) + ' '}画…`
   }
-  renderGuesses()
+  renderFeed()
 }
-function renderGuesses() {
+
+function renderBoard() {
+  const box = $('board'); box.textContent = ''
+  const list = players().sort((a, b) => scoreOf(b) - scoreOf(a) || (a < b ? -1 : 1))
+  for (const id of list) {
+    const li = document.createElement('li')
+    if (id === selfId) li.className = 'me'
+    const st = document.createElement('span'); st.className = 'st'
+    st.textContent = (phase === 'pick' || phase === 'draw') && id === drawer ? '🖌️' : (phase === 'draw' && solved.has(id)) ? '✅' : ''
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = nameOf(id) + (id === selfId ? '（我）' : '')
+    const sc = document.createElement('b'); sc.textContent = scoreOf(id)
+    li.append(st, nm, sc)
+    box.appendChild(li)
+  }
+}
+
+function renderFeed() {
   const box = $('guesses'); box.innerHTML = ''
-  for (const g of guesses) {
-    const s = document.createElement('span'); s.className = 'chip' + (g.who === 'me' ? ' me' : '')
-    s.textContent = (g.who === 'me' ? '我：' : '对方：') + g.text
+  for (const g of feed) {
+    const s = document.createElement('span')
+    if (g.ok) { s.className = 'chip ok'; s.textContent = `🎉 ${nameOf(g.id)} 猜对了 +${g.g}` }
+    else { s.className = 'chip' + (g.id === selfId ? ' me' : ''); s.textContent = `${g.id === selfId ? '我' : nameOf(g.id)}：${g.text}` }
     box.appendChild(s)
   }
 }
@@ -381,65 +466,179 @@ $('gform').addEventListener('submit', e => {
   e.preventDefault()
   const text = $('gin').value.trim().slice(0, 20)
   $('gin').value = ''
-  if (!text || role !== 'guess' || phase !== 'draw') return
-  guesses.push({who: 'me', text}); renderGuesses()
-  sendCtl({t: 'guess', r: round, text})
+  if (!text || isDrawer() || phase !== 'draw' || solved.has(selfId) || !drawer) return
+  pushFeed({id: selfId, text}); renderFeed()
+  sendCtl({t: 'guess', r: round, text}, drawer)        // 猜词只发给画手，由他判定；答对的内容不会泄露给别人
 })
 
 render()
 
 // ================= 联机 =================
-const safeColor = c => /^#[0-9a-f]{3,8}$/i.test(c) ? c : '#000000'
-const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? +v : lo))
+// 新来的人（或刚被拉进来的人）向大家问一句"hi"；游戏已在进行时，由"除我之外 id 最小的在场玩家"回复当前进度。
+function sendState(to) {
+  const msg = {t: 'state', r: round, drawer, phase, scores: Object.fromEntries(scores), solved: [...solved]}
+  if (phase === 'pick') msg.left = Math.max(0, pickEnds - Date.now())
+  if (phase === 'draw') Object.assign(msg, {left: Math.max(0, endsAt - Date.now()), len: info.len, cat: info.cat, ch: info.ch})
+  if (phase === 'result') msg.res = result
+  sendCtl(msg, to)
+  if (phase === 'draw') replayTo(to)
+}
+
+function adoptState(d, from) {
+  clearTimeout(startTimer); startTimer = null; clearTimeout(nextTimer); stopTick()
+  started = true
+  round = d.r; drawer = d.drawer; phase = d.phase; replaySrc = from
+  word = null; result = null; feed = []; candidates = []; hintSent = true
+  solved.clear(); if (Array.isArray(d.solved)) d.solved.forEach(id => isId(id) && solved.add(id))
+  if (d.scores && typeof d.scores === 'object') for (const [id, v] of Object.entries(d.scores)) if (isId(id)) scores.set(id, Math.round(num(v, 0, 99999)))
+  info = {len: Math.round(num(d.len, 0, 20)), cat: str(d.cat, 10), ch: typeof d.ch === 'string' ? d.ch.slice(0, 2) : null}
+  resetCanvas()
+  const left = num(d.left, 0, 300000)
+  if (phase === 'pick') { pickEnds = Date.now() + left; if (isDrawer()) candidates = pickCandidates() }
+  else if (phase === 'draw') endsAt = Date.now() + left
+  else {
+    const r = d.res || {}
+    result = {why: str(r.why, 12), word: str(r.word ?? '?', 20), n: Math.round(num(r.n, 0, 20))}
+    nextTimer = setTimeout(() => enterRound(round + 1, nextDrawer(drawer)), RESULT_MS)
+  }
+  startTick(); render()
+}
+
+// 发现自己落后了（收到比当前局数更新的消息，比如手机锁屏后回来）：向发送者要一份当前进度
+let lastNeed = 0
+function needFrom(id) {
+  const now = Date.now()
+  if (now - lastNeed < 1500) return
+  lastNeed = now
+  sendCtl({t: 'need'}, id)
+}
+
+function onJoin(id) {
+  if (!isId(id) || id === selfId || peers.has(id)) return
+  peers.add(id)
+  if (selfId && !started) sendCtl({t: 'hi'}, id)
+  maybeStart(); render()
+}
+function onLeave(id) {
+  if (!peers.delete(id)) return
+  scores.delete(id); solved.delete(id); lastTry.delete(id)
+  if (players().length < 2) { resetGame(); return }
+  if (started && (phase === 'pick' || phase === 'draw') && id === drawer) applyEnd({r: round, why: 'left', word: '?', n: solved.size})
+  else checkAllSolved()
+  render()
+}
+function boot() {                       // 知道自己的 id 之后
+  if (peers.size && !started) sendCtl({t: 'hi'})
+  maybeStart(); render()
+}
 
 await createLobby({
   gameId: 'draw',
   container: $('lobby'),
-  setup(room) {
-    ctlAct = room.makeAction('ctl')
-    drawAct = room.makeAction('draw')
+  maxPlayers: 10,
+  onPeerJoin: onJoin,
+  onPeerLeave: onLeave,
+  setup(r) {
+    room = r
+    ctlAct = r.makeAction('ctl')
+    drawAct = r.makeAction('draw')
+    Promise.resolve(r.getSelf()).then(s => { selfId = s.peerId; boot() })
 
     ctlAct.onMessage((d, {peerId}) => {
-      if (!d || typeof d !== 'object') return
-      if (opp === null) opp = peerId          // 对方的消息比"加入"事件先到时的兜底
-      if (peerId !== opp) return
+      if (!d || typeof d !== 'object' || !selfId || !peers.has(peerId)) return
+      if (started && Number.isInteger(d.r) && d.r > round && ['hint', 'gx', 'ok', 'end'].includes(d.t)) { needFrom(peerId); return }
       switch (d.t) {
-        case 'hello':
-          if (typeof d.r !== 'number') return
-          theirRoll = d.r
-          if (!d.ack) sendHello(true)
-          tryStart()
+        case 'hi': {
+          if (!started) return
+          const others = players().filter(id => id !== peerId)
+          if (others[0] === selfId) sendState(peerId)
           break
-        case 'round':   // 对方选好词，开始画
-          if (!started || phase === 'draw' && d.r === round) return
-          if (!(d.r >= round) || roleOf(d.r) !== 'guess') return
-          if (d.r > round || phase !== 'pick') enterRound(d.r)
-          info = {len: num(d.len, 1, 20), cat: String(d.cat || '').slice(0, 10), ch: null}
-          endsAt = Date.now() + num(d.dur, 10, 300) * 1000
+        }
+        case 'need':                    // 落后的人点名要进度：被点名的人直接回复
+          if (started) sendState(peerId)
+          break
+        case 'turn': {                  // 新画手进入选词阶段
+          if (!started || !Number.isInteger(d.r) || d.r < 1) return
+          if (d.r === round) {
+            if (phase === 'pick' && peerId !== drawer && peerId < drawer) { drawer = peerId; candidates = []; render() }   // 两人都以为轮到自己：id 小的算数
+          } else if (d.r > round && !(phase === 'result' && d.r === round + 1)) enterRound(d.r, peerId)   // 刚结束的下一局由自己的定时器切换；其余情况说明我落后了
+          break
+        }
+        case 'state': {
+          if (!Number.isInteger(d.r) || d.r < 1 || !isId(d.drawer)) return
+          if (!['pick', 'draw', 'result'].includes(d.phase)) return
+          if (started && d.r <= round) return
+          if (d.phase === 'draw' && d.drawer === selfId) return
+          adoptState(d, peerId)
+          break
+        }
+        case 'round': {                 // 画手选好词，开始画
+          if (!Number.isInteger(d.r) || d.r < 1) return
+          if (!started) { started = true; clearTimeout(startTimer); startTimer = null }   // 没赶上开局：直接接上
+          if (d.r < round) return
+          if (d.r === round) {
+            if (phase !== 'pick') return
+            if (peerId !== drawer) {    // 极少见：两个人都以为轮到自己，id 小的算数
+              if (peerId > drawer) return
+              drawer = peerId; candidates = []
+            }
+          } else enterRound(d.r, peerId)
+          info = {len: Math.round(num(d.len, 1, 20)), cat: str(d.cat, 10), ch: null}
+          endsAt = Date.now() + Math.round(num(d.dur, 10, 300)) * 1000
           phase = 'draw'
           startTick(); render()
           break
+        }
         case 'hint':
-          if (role === 'guess' && phase === 'draw' && d.r === round && typeof d.ch === 'string') { info.ch = d.ch.slice(0, 2); render() }
+          if (peerId === drawer && !isDrawer() && phase === 'draw' && d.r === round && typeof d.ch === 'string') { info.ch = d.ch.slice(0, 2); render() }
           break
-        case 'guess':
-          if (role === 'draw' && phase === 'draw' && d.r === round && typeof d.text === 'string') {
-            const text = d.text.slice(0, 20)
-            guesses.push({who: 'them', text}); renderGuesses()
-            if (isRight(text)) finishRound(true, 'ok')
+        case 'guess': {                 // 猜的人 -> 画手
+          if (!isDrawer() || phase !== 'draw' || d.r !== round || typeof d.text !== 'string' || solved.has(peerId)) return
+          const now = Date.now()
+          const text = d.text.slice(0, 20)
+          if (isRight(text)) {          // 判对永远不限频，不能把正确答案丢掉
+            const left = Math.max(0, Math.ceil((endsAt - now) / 1000))
+            const g = 10 + Math.floor(left / 10), dr = 5
+            solved.add(peerId); award(peerId, g); award(selfId, dr)
+            pushFeed({id: peerId, ok: true, g})
+            sendCtl({t: 'ok', r: round, id: peerId, g, dr})
+            render(); checkAllSolved()
+          } else {
+            if (now - (lastTry.get(peerId) || 0) < 300) return   // 只对"转发错误答案"限频，防止有人刷屏
+            lastTry.set(peerId, now)
+            pushFeed({id: peerId, text}); renderFeed()
+            sendCtl({t: 'gx', r: round, id: peerId, text})   // 答错的内容转给所有人看
+          }
+          break
+        }
+        case 'gx':
+          if (peerId === drawer && !isDrawer() && phase === 'draw' && d.r === round && isId(d.id) && d.id !== selfId && peers.has(d.id)) {
+            pushFeed({id: d.id, text: str(d.text, 20)}); renderFeed()
+          }
+          break
+        case 'ok':
+          if (peerId === drawer && !isDrawer() && phase === 'draw' && d.r === round && isId(d.id) && !solved.has(d.id)) {
+            const g = Math.round(num(d.g, 0, 50))
+            solved.add(d.id); award(d.id, g); award(drawer, Math.round(num(d.dr, 0, 20)))
+            if (d.id === selfId) {      // 我刚输入的那条答案已被确认是对的：把它从记录里撤掉，不在屏幕上留下答案
+              const i = feed.map(x => x.id === selfId && !x.ok).lastIndexOf(true)
+              if (i >= 0) feed.splice(i, 1)
+            }
+            pushFeed({id: d.id, ok: true, g})
+            render()
           }
           break
         case 'end':
-          if (role === 'guess' && phase === 'draw' && d.r === round) {
-            applyEnd({r: d.r, ok: !!d.ok, why: String(d.why || ''), word: String(d.word || '?').slice(0, 20),
-              g: Math.round(num(d.g, 0, 50)), d: Math.round(num(d.d, 0, 50))})
-          }
+          if (peerId === drawer && !isDrawer() && d.r === round) applyEnd(d)
           break
       }
     })
 
     drawAct.onMessage((d, {peerId}) => {
-      if (peerId !== opp || !d || d.r !== round || role !== 'guess' || phase !== 'draw') return
+      if (!d || typeof d !== 'object' || !peers.has(peerId)) return
+      if (started && Number.isInteger(d.r) && d.r > round) { needFrom(peerId); return }      // 我落后了：要一份进度（含已画笔迹）
+      if (d.r !== round || isDrawer() || phase !== 'draw') return
+      if (!(peerId === drawer || (d.rp === 1 && peerId === replaySrc))) return
       if (d.k === 's') {
         const s = {c: safeColor(d.c), w: num(d.w, 1, 80), p: [num(d.x, 0, W), num(d.y, 0, H)]}
         strokes.push(s); drawStroke(s, 0)
@@ -447,17 +646,12 @@ await createLobby({
         const s = strokes[strokes.length - 1]
         if (!s) return
         const n = s.p.length / 2
-        for (let i = 0; i + 1 < d.p.length; i += 2) s.p.push(num(d.p[i], 0, W), num(d.p[i + 1], 0, H))
+        for (let i = 0; i + 1 < d.p.length && i < 600; i += 2) s.p.push(num(d.p[i], 0, W), num(d.p[i + 1], 0, H))
         drawStroke(s, n - 1)
       } else if (d.k === 'u') { strokes.pop(); redraw() }
       else if (d.k === 'c') { strokes = []; redraw() }
     })
-  },
-  onOpponentJoin(id) {
-    if (opp !== id) { opp = id; resetGame() }
-    sendHello(false)
-  },
-  onOpponentLeave() { opp = null; resetGame() }
+  }
 })
 </script>
 </body>

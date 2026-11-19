@@ -35,13 +35,16 @@ function makeRoomId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(10)), b => alphabet[b % alphabet.length]).join('')
 }
 
-export async function createLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave}) {
+// 双人游戏只需要 onOpponentJoin / onOpponentLeave（只对应"第一位对手"）。
+// 多人游戏（如你画我猜）改用 onPeerJoin(peerId) / onPeerLeave(peerId)：房间里每个人进出都会通知，
+// 并传 maxPlayers（独立打开时用来调整提示文字；默认 2，和以前一致）。
+export async function createLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave, onPeerJoin, onPeerLeave, maxPlayers = 2}) {
   const params = new URLSearchParams(location.search)
 
   // 被游戏大厅放进 iframe 运行时：联机由大厅负责，这里只是转接（见 embed.js）
   if (params.get('embed') === '1' && window.parent !== window) {
     const {createEmbeddedLobby} = await import('./embed.js')
-    return createEmbeddedLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave})
+    return createEmbeddedLobby({gameId, container, setup, onOpponentJoin, onOpponentLeave, onPeerJoin, onPeerLeave})
   }
 
   const strategy = STRATEGY_URL[params.get('s')] ? params.get('s') : 'nostr'
@@ -108,20 +111,22 @@ export async function createLobby({gameId, container, setup, onOpponentJoin, onO
   el('detail').textContent = detailBase
 
   const refresh = () => {
-    if (peers.size > 1) setStatus('⚠️ 房间里超过 2 人，只和第一位对手对战', false)
-    else if (opp) setStatus('✅ 已连接，开始对战', true)
+    if (peers.size + 1 > maxPlayers) setStatus(`⚠️ 房间里超过 ${maxPlayers} 人，${maxPlayers > 2 ? '多出的人无法参与' : '只和第一位对手对战'}`, false)
+    else if (opp) setStatus(maxPlayers > 2 ? `✅ 已连接，房间里共 ${peers.size + 1} 人` : '✅ 已连接，开始对战', true)
     else setStatus('等待对方加入…（可让对方扫码）', false)
-    el('share').hidden = peers.size > 0
+    el('share').hidden = peers.size >= maxPlayers - 1     // 双人游戏：来了一个人就隐藏；多人游戏：满员才隐藏
   }
 
   room.onPeerJoin(async ({peerId}) => {
     peers.add(peerId)
+    if (onPeerJoin) onPeerJoin(peerId)
     if (!opp) { opp = peerId; if (onOpponentJoin) onOpponentJoin(peerId) }
     refresh()
     try { const ms = await room.ping(peerId); el('detail').textContent = `${detailBase} · 延迟约 ${Math.round(ms)} ms` } catch {}
   })
   room.onPeerLeave(({peerId}) => {
     peers.delete(peerId)
+    if (onPeerLeave) onPeerLeave(peerId)
     if (peerId === opp) {
       opp = peers.values().next().value || null
       if (onOpponentLeave) onOpponentLeave()

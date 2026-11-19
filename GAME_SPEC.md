@@ -43,7 +43,13 @@ await createLobby({
 - 不要使用 `room.makeState`、`addStream`、`ping` 等其他接口（内嵌模式下不存在）。
 - 所有 `makeAction` 和 `onMessage` **必须在 `setup(room)` 里注册**。
 - 内嵌时，当对手变化（有人补位、有人离开）大厅会再次调用 `onOpponentJoin` / `onOpponentLeave`，游戏必须能在任何时候被重置并重新开始。
-- 目前大厅按**双人游戏**设计：`onOpponentJoin` 只给第一位对手。需要 3 人以上的游戏，先和用户确认，并且要改共用模块（见第 8 节）。
+- `onOpponentJoin` / `onOpponentLeave` 只对应**第一位对手**，适合双人游戏。
+- **多人游戏**（3 人以上，参考 `games/draw/`）：
+  - 在 `games/registry.js` 里把 `max` 设成上限（最多 10）；`max` 等于 10 时没有观战者，房间里每个人都是玩家。
+  - 改用 `createLobby({..., onPeerJoin(peerId), onPeerLeave(peerId), maxPlayers})`：房间里**每个人**进出都会通知（不要自己去 `room.onPeerJoin`，独立打开时会和大厅的回调互相覆盖）。`maxPlayers` 只影响独立打开时的提示文字。
+  - 玩家昵称在 `room.names[peerId]`（内嵌时由大厅提供，含自己；独立打开时没有，要有兜底显示）。
+  - `send(data)` 默认发给**所有**对手，`send(data, {target})` 发给指定的人。游戏必须能应对任何人**中途加入**（要有人把当前进度发给新人）、**中途离开**（包括"正在操作的那个人"离开），以及人数降到最低人数以下时的重置。
+  - 不要依赖消息的先后到达顺序，也不要假定每个人的"在场名单"在同一时刻一致；需要全员一致的东西（如轮流顺序）用所有人都能各自算出的规则（例如对 peerId 排序），而不是靠协商。
 - `createLobby` 独立打开失败时返回 `null`，内嵌时返回 `{room, role}`；游戏不需要使用返回值。
 
 ### 同步方式
@@ -101,7 +107,7 @@ await createLobby({
 
 - **可以**：新增 `games/<新id>/`，在 `games/registry.js` 加一项，更新 README。
 - **不要碰**：其他游戏的文件；`index.html`、`shared/hub.js`、`shared/room.js`、`shared/embed.js`（大厅与房间逻辑）。
-- **尽量不改** `shared/lobby.js`、`shared/style.css`。确实要改（例如支持 3 人以上）时：保持向后兼容，改完必须把**所有现有游戏**在大厅里重测一遍，并在提交说明里写清楚原因。
+- **尽量不改** `shared/lobby.js`、`shared/style.css`。确实要改时（例如这次为多人游戏加的 `onPeerJoin` / `onPeerLeave` / `maxPlayers` / `room.names`，都是可选参数）：保持向后兼容，改完必须把**所有现有游戏**在大厅里重测一遍，并在提交说明里写清楚原因。
 - 不要升级 Trystero 版本。
 
 ## 9. 外部依赖与内容限制
