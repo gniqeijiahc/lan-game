@@ -30,6 +30,7 @@ shared/
 games/
   registry.js         游戏清单（新增游戏在这里登记）
   rps/ connect-four/ draw/ quoridor/   各个游戏
+  secret-word/        单人猜词（Jina 向量相似度）：index.html 页面、words.js 词库、config.js 接口设置、logic.js 计分逻辑
 ```
 
 ## 新增一个游戏
@@ -39,6 +40,15 @@ games/
 1. 在 `games/<id>/index.html` 写游戏，用 `shared/lobby.js` 的 `createLobby` 联机（参考 `games/rps/`）。
 2. 在 `games/registry.js` 加一项，写明 `min` / `max` 人数。
 3. 游戏既能独立打开调试（页面自带二维码），也会被大厅内嵌运行，不用写两套。
+
+## 🔮 秘密词（单人猜词）
+
+每次进入游戏，从 `words.js` 随机抽一个 4–8 字的词语；玩家随便猜词，页面用 **Jina embeddings** 算出"猜的词"和"秘密词"的语义相似度，换算成百分比（开局时拿 24 个无关词校准，使"随便一个词"约等于 0%）。房间里多人同时玩也各玩各的，互不影响。
+
+- **API Key**：不要写进仓库（GitHub Pages 是公开的，写进去等于公开送人）。玩家第一次进游戏时在页面里填，只存在自己浏览器的 localStorage。
+- **以后改用 Cloudflare Worker 代理**：把 `games/secret-word/config.js` 里的 `API_URL` 换成 Worker 地址、`API_KEY` 留空即可，页面不再要求玩家填 Key。
+- 模型、校准词数量、百分比曲线都在 `config.js`；加词只需编辑 `words.js`（4–8 个汉字）。
+- 秘密词存在于前端代码里，会看源码的人可以作弊；要防作弊，需要等有后端（Worker）之后把选词放到服务端。
 
 ## 连不上时
 

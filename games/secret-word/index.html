@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>秘密词</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  input[type=password] { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--line);
+    border-radius:10px; background:transparent; color:var(--text); font:inherit; }
+  #guess { font-size:18px; min-height:44px; }
+  button.main { min-height:44px; padding:0 20px; border:0; border-radius:10px; background:var(--accent);
+    color:#fff; font:inherit; font-weight:600; cursor:pointer; touch-action:manipulation; }
+  button.main:disabled { opacity:.55; cursor:not-allowed; }
+  button.ghost { min-height:44px; padding:8px 14px; border:1px solid var(--line); border-radius:10px;
+    background:transparent; color:var(--text); font:inherit; font-size:14px; cursor:pointer; touch-action:manipulation; }
+  button.ghost:disabled { opacity:.45; cursor:not-allowed; }
+  button.link { min-height:44px; background:none; border:0; color:var(--muted); font:inherit; font-size:13px;
+    text-decoration:underline; cursor:pointer; touch-action:manipulation; }
+
+  .err { color:var(--bad); font-size:14px; min-height:20px; margin-top:8px; }
+  .topline { display:flex; justify-content:space-between; gap:8px; font-size:14px; color:var(--muted); }
+  .mask { font-size:30px; line-height:1.3; letter-spacing:.06em; text-align:center; font-weight:700; margin:8px 0 4px; word-break:break-all; }
+  .cat { text-align:center; color:var(--accent); font-size:14px; min-height:21px; }
+  .hintbar { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:8px; }
+
+  .msg { min-height:22px; font-size:14px; margin-top:8px; }
+  .msg.bad { color:var(--bad); } .msg.warn { color:var(--warn); } .msg.ok { color:var(--ok); }
+
+  .item { padding:8px 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:0; }
+  .item.new { background:rgba(47,111,237,.08); margin:0 -8px; padding:8px; border-radius:8px; border-bottom-color:transparent; }
+  .item .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .item .w { font-weight:600; font-size:17px; word-break:break-all; }
+  .item .p { font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .item .sub { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-top:2px; }
+  .bar { height:6px; border-radius:3px; background:var(--line); overflow:hidden; margin-top:6px; }
+  .bar i { display:block; height:100%; border-radius:3px; }
+  .cold i { background:var(--accent); } .warm i { background:var(--warn); } .hot i { background:var(--ok); }
+  .cold .p { color:var(--accent); } .warm .p { color:var(--warn); } .hot .p { color:var(--ok); }
+
+  .result { text-align:center; }
+  .result .big { font-size:22px; font-weight:700; margin-bottom:6px; }
+  .result.win .big { color:var(--ok); }
+  .result button { margin-top:12px; width:100%; }
+  .center { text-align:center; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>🔮 秘密词</h1>
+
+  <div id="lobby"></div>
+
+  <!-- 填写 Jina API Key（地址不是 api.jina.ai 时不会出现） -->
+  <div class="card" id="keyCard" hidden>
+    <div><b>先填入你的 Jina API Key</b></div>
+    <div class="muted">在 jina.ai 免费申请。Key 只保存在这台设备的浏览器里，不会上传到游戏厅，也不会发给其他玩家。</div>
+    <form class="row" id="keyForm" style="margin-top:10px">
+      <input type="password" id="keyInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="jina_...">
+      <button class="main" type="submit">保存</button>
+    </form>
+    <div class="err" id="keyErr"></div>
+  </div>
+
+  <!-- 准备中 / 出错 -->
+  <div class="card center" id="stateCard" hidden>
+    <div id="stateText"></div>
+    <button class="main" type="button" id="retry" hidden style="margin-top:10px">重试</button>
+  </div>
+
+  <!-- 题目信息 -->
+  <div class="card" id="board" hidden>
+    <div class="topline"><span id="len"></span><span id="count"></span></div>
+    <div class="mask" id="mask"></div>
+    <div class="cat" id="catLine"></div>
+    <div class="hintbar">
+      <button class="ghost" type="button" id="hCat">提示：类别</button>
+      <button class="ghost" type="button" id="hChar">提示：揭示一个字</button>
+      <button class="ghost" type="button" id="giveUp">放弃</button>
+    </div>
+  </div>
+
+  <!-- 猜测输入 -->
+  <form class="card" id="guessForm" hidden novalidate>
+    <div class="row">
+      <input type="text" id="guess" lang="zh-CN" maxlength="12" autocomplete="off" autocapitalize="off"
+             spellcheck="false" enterkeyhint="send" placeholder="输入任意中文词语，例如：春暖花开">
+      <button class="main" type="submit" id="guessBtn">猜</button>
+    </div>
+    <div class="msg" id="msg" aria-live="polite"></div>
+    <div class="muted">百分比是 AI 估算的"意思接近程度"，不是字形相似。猜得越接近，数字越高。</div>
+  </form>
+
+  <!-- 结果 -->
+  <div class="card result" id="resultCard" hidden>
+    <div class="big" id="resultTitle"></div>
+    <div class="muted" id="resultSub"></div>
+    <button class="main" type="button" id="again">再来一局</button>
+  </div>
+
+  <!-- 猜测记录（按相关度从高到低） -->
+  <div class="card" id="listCard" hidden>
+    <div class="muted" style="margin-bottom:4px">猜测记录（相关度从高到低）</div>
+    <div id="list"></div>
+  </div>
+
+  <div class="center"><button class="link" type="button" id="changeKey" hidden>更换 API Key</button></div>
+</main>
+
+<script type="module">
+import {CONFIG} from './config.js'
+import {allWords} from './words.js'
+import {chars, cleanGuess, validateGuess, cosine, mean, toPercent, tier, maskText, maxReveals, pickSecret, pickRefs} from './logic.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+const WORDS = allWords()
+const store = {
+  get(k) { try { return localStorage.getItem(k) || '' } catch { return '' } },
+  set(k, v) { try { localStorage.setItem(k, v) } catch {} }
+}
+// 只有直连 Jina 时才需要玩家自己的 Key；以后改成 Cloudflare 代理地址就不需要了
+const needsKey = (() => { try { return new URL(CONFIG.API_URL).hostname === 'api.jina.ai' } catch { return true } })()
+const getKey = () => CONFIG.API_KEY || store.get('sw:jinaKey')
+let model = CONFIG.MODEL
+
+// ---------- 状态（每次进入游戏都是全新的一局，不写入 localStorage） ----------
+const S = {
+  gen: 0,                 // 每开新局 +1，用来丢弃上一局迟到的网络结果
+  phase: 'init',          // init | needKey | loading | playing | won | gaveup | error
+  secret: null, secretVec: null, base: 0,
+  guesses: [], vecs: new Map(), last: null,
+  showCat: false, revealed: new Set(), hints: 0,
+  busy: false, showKey: false,
+  msg: '', msgCls: '', err: '', lastWord: ''
+}
+
+// ---------- Jina 接口 ----------
+async function embed(texts, useModel) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 20000)
+  try {
+    const headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+    const key = getKey()
+    if (needsKey && key) headers.Authorization = 'Bearer ' + key
+    const res = await fetch(CONFIG.API_URL, {
+      method: 'POST', headers, signal: ctrl.signal,
+      body: JSON.stringify({model: useModel, task: CONFIG.TASK, input: texts})
+    })
+    if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e }
+    const json = await res.json()
+    const rows = Array.isArray(json && json.data) ? [...json.data].sort((a, b) => (a.index || 0) - (b.index || 0)) : []
+    if (rows.length !== texts.length || rows.some(r => !r || !Array.isArray(r.embedding))) throw new Error('接口返回的格式不对')
+    return rows.map(r => r.embedding)
+  } finally { clearTimeout(timer) }
+}
+
+// 开局那一次调用：如果主模型名被拒绝，自动换备用模型（之后整局都用能用的那个）
+async function embedSetup(texts) {
+  try { return await embed(texts, model) }
+  catch (e) {
+    if ([400, 404, 422].includes(e.status) && CONFIG.FALLBACK_MODEL && model !== CONFIG.FALLBACK_MODEL) {
+      model = CONFIG.FALLBACK_MODEL
+      return await embed(texts, model)
+    }
+    throw e
+  }
+}
+
+function explain(e) {
+  if (e && e.name === 'AbortError') return '请求超时了，请重试。'
+  const s = e && e.status
+  if (s === 401 || s === 403) return 'API Key 无效或没有权限，请检查后重新填写。'
+  if (s === 402) return '额度可能已经用完了。'
+  if (s === 429) return '请求太频繁或额度用完了，稍等一会再试。'
+  if (s >= 500) return 'Jina 服务暂时不可用，请稍后再试。'
+  if (e instanceof TypeError) return '网络连接失败（网络不通，或被浏览器拦截）。'
+  return '出错了：' + (e && e.message || e)
+}
+
+// ---------- 开局 ----------
+async function startGame() {
+  const gen = ++S.gen
+  Object.assign(S, {
+    secret: pickSecret(WORDS, Math.random, S.lastWord), secretVec: null, base: 0,
+    guesses: [], vecs: new Map(), last: null, showCat: false, revealed: new Set(), hints: 0,
+    busy: false, msg: '', msgCls: '', err: ''
+  })
+  S.lastWord = S.secret.word
+  if (needsKey && !getKey()) { S.phase = 'needKey'; render(); return }
+  S.phase = 'loading'; render()
+  try {
+    // 一次请求同时算出：秘密词的向量 + 一批"无关词"的相似度，用来把 0% 定在合适的位置
+    const refs = pickRefs(WORDS, S.secret, CONFIG.REF_COUNT)
+    const vecs = await embedSetup([S.secret.word, ...refs])
+    if (gen !== S.gen) return
+    S.secretVec = vecs[0]
+    S.base = mean(vecs.slice(1).map(v => cosine(vecs[0], v)))
+    S.phase = 'playing'
+  } catch (e) {
+    if (gen !== S.gen) return
+    S.phase = (e.status === 401 || e.status === 403) ? 'needKey' : 'error'
+    S.err = explain(e)
+  }
+  render()
+  focusGuess()
+}
+
+function focusGuess() {
+  // 触屏设备不自动弹键盘
+  if (S.phase === 'playing' && matchMedia('(pointer:fine)').matches) $('guess').focus({preventScroll: true})
+}
+
+// ---------- 猜测 ----------
+async function submitGuess() {
+  if (S.phase !== 'playing' || S.busy) return
+  const word = cleanGuess($('guess').value)
+  const bad = validateGuess(word)
+  if (bad) return say(bad, 'bad')
+  if (S.guesses.some(g => g.word === word)) { S.last = S.guesses.find(g => g.word === word); say('这个词已经猜过了', 'warn'); return render() }
+
+  const gen = S.gen
+  const isSecret = word === S.secret.word
+  let vec = S.vecs.get(word)
+  if (!isSecret && !vec) {
+    S.busy = true; say('', ''); render()
+    try { [vec] = await embed([word], model) }
+    catch (e) {
+      if (gen !== S.gen) return
+      S.busy = false
+      if (e.status === 401 || e.status === 403) { S.showKey = true; S.err = explain(e) }
+      say(explain(e), 'bad'); return render()
+    }
+    if (gen !== S.gen) return
+    S.vecs.set(word, vec)
+    S.busy = false
+  }
+
+  const cos = isSecret ? 1 : cosine(S.secretVec, vec)
+  const pct = isSecret ? 100 : Math.min(99.9, toPercent(cos, S.base, CONFIG.CURVE))
+  const g = {word, pct, n: S.guesses.length + 1}
+  S.guesses.push(g); S.last = g
+  $('guess').value = ''
+  if (isSecret) { S.phase = 'won'; say('', '') }
+  else say(`「${word}」相关度 ${pct.toFixed(1)}%（${tier(pct).label}）`, pct >= 50 ? 'ok' : '')
+  render()
+  focusGuess()
+}
+
+function say(text, cls) { S.msg = text; S.msgCls = cls || ''; $('msg').textContent = text; $('msg').className = 'msg ' + (cls || '') }
+
+// ---------- 提示 ----------
+$('hCat').onclick = () => { if (S.phase === 'playing' && !S.showCat) { S.showCat = true; S.hints++; render() } }
+$('hChar').onclick = () => {
+  if (S.phase !== 'playing' || S.revealed.size >= maxReveals(S.secret.word)) return
+  const left = chars(S.secret.word).map((_, i) => i).filter(i => !S.revealed.has(i))
+  S.revealed.add(left[Math.floor(Math.random() * left.length)])
+  S.hints++; render()
+}
+$('giveUp').onclick = () => { if (S.phase === 'playing') { S.phase = 'gaveup'; say('', ''); render() } }
+$('again').onclick = () => startGame()
+$('retry').onclick = () => startGame()
+
+// ---------- API Key ----------
+$('changeKey').onclick = () => { S.showKey = true; S.err = ''; render(); $('keyInput').focus({preventScroll: true}) }
+$('keyForm').onsubmit = e => {
+  e.preventDefault()
+  const key = $('keyInput').value.trim()
+  if (key.length < 10 || /\s/.test(key)) { S.err = '这看起来不像有效的 Key，请检查后再试'; return render() }
+  store.set('sw:jinaKey', key)
+  $('keyInput').value = ''
+  S.err = ''; S.showKey = false
+  if (S.phase === 'needKey' || S.phase === 'error') startGame(); else render()
+}
+$('guessForm').onsubmit = e => { e.preventDefault(); submitGuess() }
+
+// ---------- 画面 ----------
+function render() {
+  const p = S.phase
+  const over = p === 'won' || p === 'gaveup'
+  const inGame = p === 'playing' || over
+  const len = S.secret ? chars(S.secret.word).length : 0
+
+  const keyVisible = needsKey && (p === 'needKey' || S.showKey)
+  $('keyCard').hidden = !keyVisible
+  $('keyErr').textContent = keyVisible ? S.err : ''
+  $('changeKey').hidden = !(needsKey && !CONFIG.API_KEY && !keyVisible && inGame)
+
+  $('stateCard').hidden = !(p === 'loading' || p === 'error')
+  $('stateText').textContent = p === 'loading' ? '正在准备题目…' : S.err
+  $('retry').hidden = p !== 'error'
+
+  $('board').hidden = !inGame
+  $('len').textContent = len ? `这个词一共 ${len} 个字` : ''
+  $('count').textContent = `已猜 ${S.guesses.length} 次 · 提示 ${S.hints} 次`
+  if (S.secret) $('mask').textContent = over ? chars(S.secret.word).join(' ') : maskText(S.secret.word, S.revealed)
+  $('catLine').textContent = S.secret && (S.showCat || over) ? `类别：${S.secret.category}` : ''
+  const left = S.secret ? maxReveals(S.secret.word) - S.revealed.size : 0
+  $('hCat').disabled = p !== 'playing' || S.showCat
+  $('hChar').disabled = p !== 'playing' || left <= 0
+  $('hChar').textContent = `提示：揭示一个字（剩 ${Math.max(left, 0)} 次）`
+  $('giveUp').disabled = p !== 'playing'
+
+  $('guessForm').hidden = p !== 'playing'
+  $('guess').disabled = S.busy
+  $('guessBtn').disabled = S.busy
+  $('guessBtn').textContent = S.busy ? '计算中…' : '猜'
+  $('msg').textContent = S.msg; $('msg').className = 'msg ' + S.msgCls
+
+  $('resultCard').hidden = !over
+  $('resultCard').className = 'card result' + (p === 'won' ? ' win' : '')
+  if (over) {
+    if (p === 'won') {
+      $('resultTitle').textContent = `🎉 猜对了！答案是「${S.secret.word}」`
+      $('resultSub').textContent = `一共猜了 ${S.guesses.length} 次，用了 ${S.hints} 次提示`
+    } else {
+      $('resultTitle').textContent = `答案是「${S.secret.word}」`
+      const best = S.guesses.reduce((m, g) => (!m || g.pct > m.pct ? g : m), null)
+      $('resultSub').textContent = best ? `你最接近的是「${best.word}」（${best.pct.toFixed(1)}%），下次加油！` : '下次加油！'
+    }
+  }
+
+  $('listCard').hidden = !S.guesses.length
+  renderList()
+}
+
+function renderList() {
+  const box = $('list')
+  box.textContent = ''
+  const sorted = [...S.guesses].sort((a, b) => b.pct - a.pct)
+  for (const g of sorted) {
+    const t = tier(g.pct)
+    const item = document.createElement('div')
+    item.className = `item ${t.cls}` + (g === S.last ? ' new' : '')
+    const top = document.createElement('div'); top.className = 'top'
+    const w = document.createElement('span'); w.className = 'w'; w.textContent = g.word
+    const pc = document.createElement('span'); pc.className = 'p'; pc.textContent = (g.pct >= 100 ? '100' : g.pct.toFixed(1)) + '%'
+    top.append(w, pc)
+    const bar = document.createElement('div'); bar.className = 'bar'
+    const fill = document.createElement('i'); fill.style.width = Math.max(g.pct, 1.5) + '%'
+    bar.appendChild(fill)
+    const sub = document.createElement('div'); sub.className = 'sub'
+    const a = document.createElement('span'); a.textContent = g.pct >= 100 ? '🎉 就是它！' : t.label
+    const b = document.createElement('span'); b.textContent = '第 ' + g.n + ' 次'
+    sub.append(a, b)
+    item.append(top, bar, sub)
+    box.appendChild(item)
+  }
+}
+
+// ---------- 启动 ----------
+// 被大厅内嵌时：只和大厅握手，好让 iframe 自动撑高。本游戏是单人玩法，不收发联机消息，
+// 房间里每个人各自抽自己的秘密词、各玩各的。
+if (new URLSearchParams(location.search).get('embed') === '1' && window.parent !== window) {
+  import('../../shared/lobby.js')
+    .then(m => m.createLobby({gameId: 'secret-word', container: $('lobby'), setup() {}}))
+    .catch(e => console.error(e))
+}
+startGame()
+</script>
+</body>
+</html>
