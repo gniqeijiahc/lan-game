@@ -175,6 +175,7 @@ function explain(e) {
   if (s === 429) return 'AI 太忙了（免费额度限速），等一会再猜。'
   if (s === 500) return '主机的 Worker 还没配置好 Gemini Key。'
   if (s === 502) return 'AI 这次没给出可用的答案，请再试一次。'
+  if (s === 422) return 'Worker 不认这个请求：多半是 Worker 里还是旧代码，请粘贴新的 proxy-worker.js 并 Deploy。'
   if (s === 403) return '这个网站没有被 Worker 允许访问。'
   if (e instanceof TypeError) return '网络连接失败（网络不通，或被浏览器拦截）。'
   return '出错了：' + String(e && e.message || e).slice(0, 40)
