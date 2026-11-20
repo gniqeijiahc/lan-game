@@ -1,0 +1,158 @@
+// Cloudflare Worker：猜词游戏用的代理（一个 Worker 管两个游戏）
+//
+//   POST /        → 转发到 Jina embeddings（「秘密词」游戏）      需要 Secret：JINA_API_KEY
+//   POST /middle  → 用 Gemini 生成"中间词"（「中间词」游戏）       需要 Secret：GEMINI_API_KEY
+//                   可选变量 GEMINI_MODELS：用逗号隔开的模型名，按顺序尝试（默认见下面）
+//
+// 两个 Key 都只存在 Cloudflare 里，页面和 GitHub 上都看不到。
+//
+// 防滥用：只接受来自你网站的请求；Jina 只允许指定模型、限制词数和长度；
+// Gemini 的提示词写死在这里，页面只能传"秘密词 / 猜的词"，所以它不能被当成通用的 AI 接口来用，
+// 而且只会返回一个中文词。
+// 注意：来源检查挡得住别人的网页盗用，但挡不住有人用脚本伪造来源。
+// Cloudflare 免费版每天最多 10 万次请求；Gemini 免费额度更小（见 /middle 部分的说明）。
+
+const ALLOWED_ORIGINS = [
+  'https://gniqeijiahc.github.io',   // 你的 GitHub Pages
+  'http://localhost:8000',           // 本地调试用，不需要可以删掉
+  'http://127.0.0.1:8000'
+]
+
+// ---------- Jina（「秘密词」） ----------
+const ALLOWED_MODELS = ['jina-embeddings-v5-text-small', 'jina-embeddings-v3']
+const ALLOWED_TASKS = ['text-matching']
+const MAX_ITEMS = 30        // 开局一次要算 25 个词，平时每次 1 个
+const MAX_CHARS = 16        // 每个词最长 16 个字符（游戏里最长 12 个字）
+const JINA_URL = 'https://api.jina.ai/v1/embeddings'
+
+// ---------- Gemini（「中间词」） ----------
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/'
+// 免费额度是"每个模型各算各的"，所以多放一个模型，第一个被限速（429）时自动换第二个。
+// 模型名会随 Google 更新而变；如果某个名字失效，到 Cloudflare 的 Worker 设置里加一个变量
+// GEMINI_MODELS（例如 gemini-3.5-flash-lite,gemini-3.1-flash-lite）就能覆盖，不用改代码。
+const DEFAULT_GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+const HAN = /^\p{Script=Han}+$/u
+
+function cors(origin) {
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin'
+  }
+}
+const json = (status, body, origin) =>
+  new Response(JSON.stringify(body), {status, headers: {'Content-Type': 'application/json', ...(origin ? cors(origin) : {})}})
+
+export default {
+  async fetch(request, env) {
+    const origin = request.headers.get('Origin') || ''
+    const allowed = ALLOWED_ORIGINS.includes(origin)
+
+    if (request.method === 'OPTIONS') {                       // 浏览器的跨域预检
+      return allowed ? new Response(null, {status: 204, headers: cors(origin)}) : new Response(null, {status: 403})
+    }
+    if (!allowed) return json(403, {error: 'origin not allowed'})
+    if (request.method !== 'POST') return json(405, {error: 'POST only'}, origin)
+
+    let body
+    try { body = await request.json() } catch { return json(400, {error: 'invalid json'}, origin) }
+
+    const path = new URL(request.url).pathname
+    if (path === '/middle') return middle(body, env, origin)
+    return embeddings(body, env, origin)
+  }
+}
+
+// =============================== Jina ===============================
+async function embeddings(body, env, origin) {
+  if (!env.JINA_API_KEY) return json(500, {error: 'JINA_API_KEY is not set'}, origin)
+  const input = body && body.input
+  if (!body || !ALLOWED_MODELS.includes(body.model) || !ALLOWED_TASKS.includes(body.task)) return json(422, {error: 'model or task not allowed'}, origin)
+  if (!Array.isArray(input) || input.length < 1 || input.length > MAX_ITEMS ||
+      input.some(s => typeof s !== 'string' || s.length < 1 || s.length > MAX_CHARS)) return json(422, {error: 'invalid input'}, origin)
+
+  let upstream
+  try {
+    upstream = await fetch(JINA_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ' + env.JINA_API_KEY},
+      body: JSON.stringify({model: body.model, task: body.task, input})   // 只转发我们允许的字段
+    })
+  } catch { return json(502, {error: 'upstream unreachable'}, origin) }
+
+  // 上游的 401/403 是"Worker 里的 Key 有问题"，不要原样转给游戏（游戏会以为是玩家要重填 Key）
+  if (upstream.status === 401 || upstream.status === 403) return json(502, {error: 'upstream rejected the key'}, origin)
+
+  return new Response(upstream.body, {status: upstream.status, headers: {'Content-Type': 'application/json', ...cors(origin)}})
+}
+
+// ============================== Gemini ==============================
+const validWord = (s, min, max) => typeof s === 'string' && s.length >= min && s.length <= max && HAN.test(s)
+
+function buildPrompt(secret, guess, avoid) {
+  return [
+    '你在为一个中文猜词游戏想"中间词"。',
+    `秘密词：${secret}`,
+    `玩家猜的词：${guess}`,
+    '',
+    '请想一个"中间词"：它在意思上处于「玩家猜的词」和「秘密词」之间，像一座桥——跟两个词都有明显的联系，并且比玩家猜的词更接近秘密词，但不能直接把秘密词说出来。',
+    '要求：',
+    '1. 只输出这一个中文词语（2 到 6 个字），不要标点、引号、解释或任何其他文字。',
+    `2. 不能是「${secret}」或「${guess}」，不能是秘密词的同义词，也尽量不要使用秘密词里的字。`,
+    avoid.length ? `3. 不要使用这些词：${avoid.join('、')}。` : ''
+  ].filter(Boolean).join('\n')
+}
+
+// 从 Gemini 的回复里取文字（跳过"思考"部分）
+function extractText(data) {
+  const parts = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts
+  if (!Array.isArray(parts)) return ''
+  return parts.filter(p => p && typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
+}
+
+// 只接受"整段回复就是一个中文词"（容忍引号、句号、加粗、"中间词：" 前缀）；回了一句话就当作无效
+function cleanWord(text) {
+  if (typeof text !== 'string') return null
+  let t = text.trim().split(/\n/)[0].trim()
+  t = t.replace(/^[\s"'“”‘’「」『』《》（）()\[\]*#>\-–—]+|[\s"'“”‘’「」『』《》（）()\[\]*#>。.!！,，;；]+$/gu, '')
+  const m = t.match(/^(?:中间词[：:]\s*)?(\p{Script=Han}{1,8})$/u)
+  return m ? m[1] : null
+}
+
+async function middle(body, env, origin) {
+  if (!env.GEMINI_API_KEY) return json(500, {error: 'GEMINI_API_KEY is not set'}, origin)
+  const secret = body && body.secret, guess = body && body.guess
+  const avoid = body && body.avoid === undefined ? [] : body && body.avoid
+  if (!validWord(secret, 2, 12) || !validWord(guess, 1, 12) || !Array.isArray(avoid) || avoid.length > 3 ||
+      avoid.some(w => !validWord(w, 1, 8))) return json(422, {error: 'invalid input'}, origin)
+
+  const models = (env.GEMINI_MODELS ? String(env.GEMINI_MODELS).split(',') : DEFAULT_GEMINI_MODELS)
+    .map(s => s.trim()).filter(s => /^[a-z0-9][a-z0-9.\-]*$/.test(s))
+  if (!models.length) return json(500, {error: 'no valid model configured'}, origin)
+
+  const payload = JSON.stringify({
+    contents: [{role: 'user', parts: [{text: buildPrompt(secret, guess, avoid)}]}],
+    generationConfig: {temperature: 0.6, maxOutputTokens: 256}
+  })
+
+  let last = 502
+  for (const model of models) {
+    let r
+    try {
+      r = await fetch(GEMINI_BASE + model + ':generateContent', {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY}, body: payload
+      })
+    } catch { last = 502; continue }
+    if (r.status === 429) { last = 429; continue }                   // 这个模型被限速：换下一个
+    if (r.status === 404 || r.status >= 500) { last = 502; continue }  // 模型名失效或 Google 出错：换下一个
+    if (!r.ok) return json(502, {error: 'upstream rejected the request'}, origin)   // 400/401/403：多半是 Key 有问题，换模型也没用
+    let data = null
+    try { data = await r.json() } catch {}
+    const word = cleanWord(extractText(data))
+    if (word) return json(200, {word, model}, origin)
+    last = 502                                                        // 空回复（被安全过滤）或回了一整句：换下一个
+  }
+  return json(last, {error: last === 429 ? 'rate limited' : 'no usable answer'}, origin)
+}

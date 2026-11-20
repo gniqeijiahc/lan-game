@@ -30,6 +30,7 @@ shared/
 games/
   registry.js         游戏清单（新增游戏在这里登记）
   rps/ connect-four/ draw/ quoridor/   各个游戏
+  middle-word/        多人同猜（Gemini 生成"中间词"，房主代请求）：同 secret-word 的结构
   secret-word/        多人同猜（Jina 向量相似度，房主出题并代算）：index.html 页面、words.js 词库、config.js 接口设置、logic.js 计分逻辑
 ```
 
@@ -50,9 +51,20 @@ games/
 - **防滥用**：每人同时只能排一个词，同一人至少间隔 0.5 秒，一局最多记录 120 次猜测，用来保护房主的 API 额度。
 - **API Key**：不要写进仓库（GitHub Pages 是公开的，写进去等于公开送人）。Jina Key 存在 Cloudflare Worker 的 Secret（名称 `JINA_API_KEY`）里，页面完全看不到。
 - **共用模块的改动**：为了让游戏知道谁是房主，`shared/hub.js` 在发给游戏页面的 `init` / `peers` 消息里多带了一个可选字段 `host`（房主的 peerId），`shared/embed.js` 把它放到 `room.host`。其他游戏不读它，不受影响。直接打开游戏页面（没有大厅）时没有房主，退而求其次用"id 最小的人"当主机。
-- **Cloudflare Worker 代理**：代码在 `cloudflare/jina-proxy.js`，部署在 `https://jina-proxy.chaijieqing2718.workers.dev/`（`config.js` 的 `API_URL` 指向它）。它只接受来自 `https://gniqeijiahc.github.io` 的请求、只允许指定模型、限制每次的词数和长度；要改来源白名单或模型，改这个文件后到 Cloudflare 控制台 Workers & Pages → 该 Worker → Edit Code 重新粘贴并 Deploy。想改回直连 Jina，把 `API_URL` 换回 `https://api.jina.ai/v1/embeddings`，房主就要在页面里自己填 Key。
+- **Cloudflare Worker 代理**：代码在 `cloudflare/proxy-worker.js`（一个 Worker 同时服务「秘密词」和「中间词」），部署在 `https://jina-proxy.chaijieqing2718.workers.dev/`（`config.js` 的 `API_URL` 指向它）。它只接受来自 `https://gniqeijiahc.github.io` 的请求、只允许指定模型、限制每次的词数和长度；要改来源白名单或模型，改这个文件后到 Cloudflare 控制台 Workers & Pages → 该 Worker → Edit Code 重新粘贴并 Deploy。想改回直连 Jina，把 `API_URL` 换回 `https://api.jina.ai/v1/embeddings`，房主就要在页面里自己填 Key。
 - 模型、校准词数量、百分比曲线都在 `config.js`；加词只需编辑 `words.js`（4–8 个汉字）。
 - **防作弊**：秘密词只在房主页面的内存里，其他玩家拿不到；但房主自己打开开发者工具能看到答案，词库 `words.js` 也是公开的。要彻底防作弊，需要等有后端（Worker）之后把选词放到服务端。
+
+## 🌉 中间词（多人同猜）
+
+从 `words.js`（和秘密词同一个 4–8 字词库）随机抽一个秘密词。玩家猜一个词，AI 给出一个**意思介于"你猜的词"和"秘密词"之间的中间词**，页面只显示中间词（不显示百分比）；大家顺着中间词的线索继续猜，直到猜中。
+
+- **为什么用 Gemini**：Jina 只做向量，不能生成文字，所以这个游戏用 Gemini 免费 API 生成中间词；「秘密词」仍用 Jina。
+- **结构和秘密词一样**：房主就是主机，持有秘密词，所有人（含房主）猜的词发给房主，房主经 Worker 的 `/middle` 向 Gemini 要中间词，再把公共状态广播给大家。Key 只存在 Worker 的 Secret `GEMINI_API_KEY` 里。
+- **保护免费额度**：主机两次请求间隔至少 `MIN_GAP_MS`（默认 2.5 秒）、每人同时只排一个、同一个词本局只问一次（缓存）、一局最多 100 次猜测；Worker 里放了两个模型轮换，被限速（429）时换下一个。
+- **中间词校验**：必须是 2–8 个汉字，不能等于猜的词或秘密词，不能是秘密词的一部分、也不能包含整个秘密词；不合格就带上 `avoid` 重试一次，仍不合格这次猜测不计数。
+- **Worker 配置**：到 Cloudflare 把 `cloudflare/proxy-worker.js` 粘贴进 Edit Code 并 Deploy，再添加 Secret `GEMINI_API_KEY`；可选变量 `GEMINI_MODELS`（逗号分隔，覆盖默认模型名）。免费额度以 aistudio.google.com/rate-limit 显示为准。
+- **注意**：Gemini 免费层的内容可能被 Google 用来改进产品；中间词的质量取决于提示词，想调整改 `proxy-worker.js` 里的 `buildPrompt`。
 
 ## 连不上时
 
