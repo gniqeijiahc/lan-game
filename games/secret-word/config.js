@@ -1,11 +1,11 @@
 // 秘密词游戏的 Jina 设置。
 export const CONFIG = {
-  // 调用 Jina 的地址。以后改用 Cloudflare Worker 代理时，把它换成 Worker 的网址，
-  // 并把 API_KEY 留空即可（地址不是 api.jina.ai 时，页面不会再要求玩家填 Key）。
-  API_URL: 'https://api.jina.ai/v1/embeddings',
+  // 调用 Jina 的地址：现在走你的 Cloudflare Worker，Jina Key 存在 Worker 的 Secret 里，页面不需要任何 Key。
+  // （地址不是 api.jina.ai 时，页面不会再要求房主填 Key。）
+  // 想改回直连 Jina：换成 'https://api.jina.ai/v1/embeddings'，房主就要在页面里自己填 Key。
+  API_URL: 'https://jina-proxy.chaijieqing2718.workers.dev/',
 
-  // 直接写在这里会随代码公开在 GitHub 上，别人可以盗用额度，所以默认留空。
-  // 玩家在页面里自己填写，Key 只保存在自己浏览器的 localStorage 里。
+  // 走 Worker 时留空。不要把 Jina Key 写在这里，它会随代码公开在 GitHub 上。
   API_KEY: '',
 
   MODEL: 'jina-embeddings-v5-text-small',
