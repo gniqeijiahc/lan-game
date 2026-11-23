@@ -30,7 +30,7 @@ shared/
 games/
   registry.js         游戏清单（新增游戏在这里登记）
   rps/ connect-four/ draw/ quoridor/   各个游戏
-  middle-word/        多人同猜（Gemini 生成"中间词"，房主代请求）：同 secret-word 的结构
+  middle-word/        多人默契游戏（和 AI 一起说词，AI 生成"中间词"，房主代请求）：index.html、config.js、logic.js
   secret-word/        多人同猜（Jina 向量相似度，房主出题并代算）：index.html 页面、words.js 词库、config.js 接口设置、logic.js 计分逻辑
 ```
 
@@ -55,16 +55,16 @@ games/
 - 模型、校准词数量、百分比曲线都在 `config.js`；加词只需编辑 `words.js`（4–8 个汉字）。
 - **防作弊**：秘密词只在房主页面的内存里，其他玩家拿不到；但房主自己打开开发者工具能看到答案，词库 `words.js` 也是公开的。要彻底防作弊，需要等有后端（Worker）之后把选词放到服务端。
 
-## 🌉 中间词（多人同猜）
+## 🌉 中间词（多人默契）
 
-从 `words.js`（和秘密词同一个 4–8 字词库）随机抽一个秘密词。玩家猜一个词，AI 给出一个**意思介于"你猜的词"和"秘密词"之间的中间词**，页面只显示中间词（不显示百分比）；大家顺着中间词的线索继续猜，直到猜中。
+每一轮，所有玩家和 **AI** 同时秘密说一个词。揭晓后，只要有两个或更多的"人"说了同一个词（AI 也算一个），说这个词的每个人各得 1 分，然后开始新的词局（AI 换一个开头词）。没有人相同时，AI 根据场上所有的词想一个**中间词**，当作它下一轮要说的词——大家要猜 AI 会说什么、也要往彼此靠。先到 5 分的赢（玩家和 AI 都可能赢）。只有一个人时，就是你和 AI 对玩。
 
-- **为什么用 LLM**：Jina 只做向量，不能生成文字，所以这个游戏用大模型生成中间词（Worker 先试智谱 GLM 免费模型，再试 Gemini）；「秘密词」仍用 Jina。
-- **结构和秘密词一样**：房主就是主机，持有秘密词，所有人（含房主）猜的词发给房主，房主经 Worker 的 `/middle` 向 Gemini 要中间词，再把公共状态广播给大家。Key 只存在 Worker 的 Secret（`ZHIPU_API_KEY`、`GEMINI_API_KEY`，至少设一个）里。
-- **保护免费额度**：主机两次请求间隔至少 `MIN_GAP_MS`（默认 2.5 秒）、每人同时只排一个、同一个词本局只问一次（缓存）、一局最多 100 次猜测；Worker 里放了两个模型轮换，被限速（429）时换下一个。
-- **中间词校验**：必须是 2–8 个汉字，不能等于猜的词或秘密词，不能是秘密词的一部分、也不能包含整个秘密词；不合格就带上 `avoid` 重试一次，仍不合格这次猜测不计数。
-- **Worker 配置**：到 Cloudflare 把 `cloudflare/proxy-worker.js` 粘贴进 Edit Code 并 Deploy，再添加 Secret `ZHIPU_API_KEY`（和/或 `GEMINI_API_KEY`）。智谱国际站（z.ai）申请的 Key 要加变量 `ZHIPU_BASE` = `https://api.z.ai/api/paas/v4`，中国站（bigmodel.cn）的不用设。可选变量 `ZHIPU_MODELS` / `GEMINI_MODELS`（逗号分隔，覆盖默认模型名）。免费额度以 aistudio.google.com/rate-limit 显示为准。
-- **注意**：Gemini 免费层的内容可能被 Google 用来改进产品；中间词的质量取决于提示词，想调整改 `proxy-worker.js` 里的 `buildPrompt`。
+- **主机**：房主的页面收词、揭晓、算分、请求 AI。别人提交的词在揭晓前只有主机知道，其他人只能看到"谁已经提交了"；AI 的词也是揭晓时才公开。
+- **规则细节**：一个词局里说过的词不能再说；每轮 90 秒（`config.js` 的 `TURN_SECONDS`），到时间按已提交的词揭晓，主机也可以随时点"现在揭晓"；有人离开不会卡住游戏；房主离开后下一位接任并开新的一局。
+- **AI**：经 Worker 的 `/blend`（一组词 → 一个中间词）。Worker 先试智谱 GLM 免费模型，再试 Gemini；Key 存在 Worker 的 Secret（`ZHIPU_API_KEY`、`GEMINI_API_KEY`，至少设一个）里。每一轮没人相同时才请求一次 AI，额度消耗很小。AI 出错（限速、没配置、回了不合格的词）时，游戏不会卡住：随机换一个开头词继续，并提示一句。
+- **Worker 配置**：把 `cloudflare/proxy-worker.js` 粘贴到 Cloudflare 的 Edit Code 并 Deploy，再添加 Secret `ZHIPU_API_KEY`（和/或 `GEMINI_API_KEY`）。智谱国际站（z.ai）申请的 Key 要加变量 `ZHIPU_BASE` = `https://api.z.ai/api/paas/v4`，中国站（bigmodel.cn）的不用设。可选变量 `ZHIPU_MODELS` / `GEMINI_MODELS`（逗号分隔，覆盖默认模型名）。
+- **调整**：目标分数、每轮时间在 `config.js`；AI 的提示词在 `cloudflare/proxy-worker.js` 的 `buildBlendPrompt`；AI 开头词在 `logic.js` 的 `STARTERS`。
+- **注意**：Gemini 免费层的内容可能被 Google 用来改进产品。
 
 ## 连不上时
 

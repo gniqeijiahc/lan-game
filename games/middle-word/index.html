@@ -6,8 +6,6 @@
 <title>中间词</title>
 <link rel="stylesheet" href="../../shared/style.css">
 <style>
-  input[type=password] { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--line);
-    border-radius:10px; background:transparent; color:var(--text); font:inherit; }
   #guess { font-size:18px; min-height:44px; }
   button.main { min-height:44px; padding:0 20px; border:0; border-radius:10px; background:var(--accent);
     color:#fff; font:inherit; font-weight:600; cursor:pointer; touch-action:manipulation; }
@@ -15,37 +13,32 @@
   button.ghost { min-height:44px; padding:8px 14px; border:1px solid var(--line); border-radius:10px;
     background:transparent; color:var(--text); font:inherit; font-size:14px; cursor:pointer; touch-action:manipulation; }
   button.ghost:disabled { opacity:.45; cursor:not-allowed; }
-  button.link { min-height:44px; background:none; border:0; color:var(--muted); font:inherit; font-size:13px;
-    text-decoration:underline; cursor:pointer; touch-action:manipulation; }
 
-  .err { color:var(--bad); font-size:14px; min-height:20px; margin-top:8px; }
   .role { font-size:13px; color:var(--muted); margin:0 0 10px; }
   .role:empty { display:none; }
   .chips { display:flex; flex-wrap:wrap; gap:6px; }
   .chip { padding:4px 10px; border:1px solid var(--line); border-radius:999px; font-size:13px; word-break:break-all; }
   .chip.me { border-color:var(--accent); color:var(--accent); }
-  .topline { display:flex; justify-content:space-between; gap:8px; font-size:14px; color:var(--muted); }
-  .mask { font-size:30px; line-height:1.3; letter-spacing:.06em; text-align:center; font-weight:700; margin:8px 0 4px; word-break:break-all; }
-  .cat { text-align:center; color:var(--accent); font-size:14px; min-height:21px; }
-  .hintbar { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:8px; }
-
+  .chip b { font-variant-numeric:tabular-nums; }
+  .topline { display:flex; justify-content:space-between; gap:8px; font-size:14px; color:var(--muted); margin-bottom:8px; }
   .msg { min-height:22px; font-size:14px; margin-top:8px; }
   .msg.bad { color:var(--bad); } .msg.warn { color:var(--warn); } .msg.ok { color:var(--ok); }
+  .wait { text-align:center; padding:6px 0; }
+  .wait .mine { font-size:22px; font-weight:700; color:var(--accent); margin:4px 0; word-break:break-all; }
 
-  .item { padding:8px 0; border-bottom:1px solid var(--line); }
-  .item:last-child { border-bottom:0; }
-  .item.new { background:rgba(47,111,237,.08); margin:0 -8px; padding:8px; border-radius:8px; border-bottom-color:transparent; }
-  .item .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
-  .item .w { font-weight:600; font-size:17px; word-break:break-all; }
-  .item .sub { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; gap:8px; margin-top:2px; }
-  .item .sub span:first-child { word-break:break-all; }
-  .item .arrow { color:var(--muted); }
-  .item .mid { font-weight:700; font-size:19px; color:var(--accent); word-break:break-all; }
-  .item.win .mid { color:var(--ok); }
+  .turn { padding:10px 0; border-bottom:1px solid var(--line); }
+  .turn:last-child { border-bottom:0; }
+  .turn.new { background:rgba(47,111,237,.08); margin:0 -8px; padding:10px 8px; border-radius:8px; border-bottom-color:transparent; }
+  .turn .head { font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .turn .words { display:flex; flex-wrap:wrap; gap:6px; }
+  .w { padding:4px 10px; border:1px solid var(--line); border-radius:10px; font-size:16px; word-break:break-all; }
+  .w small { display:block; font-size:11px; color:var(--muted); }
+  .w.hit { border-color:var(--ok); background:rgba(34,160,90,.12); }
+  .turn .res { font-size:13px; margin-top:6px; }
+  .res.ok { color:var(--ok); } .res.none { color:var(--muted); }
 
   .result { text-align:center; }
-  .result .big { font-size:22px; font-weight:700; margin-bottom:6px; word-break:break-all; }
-  .result.win .big { color:var(--ok); }
+  .result .big { font-size:22px; font-weight:700; margin-bottom:6px; word-break:break-all; color:var(--ok); }
   .result button { margin-top:12px; width:100%; }
   .center { text-align:center; }
 </style>
@@ -62,32 +55,31 @@
     <div id="stateText"></div>
   </div>
 
-  <div class="card" id="board" hidden>
-    <div class="topline"><span id="len"></span><span id="count"></span></div>
-    <div class="mask" id="mask"></div>
-    <div class="cat" id="catLine"></div>
-    <div class="hintbar">
-      <button class="ghost" type="button" id="hCat">提示：类别</button>
-      <button class="ghost" type="button" id="hChar">提示：揭示一个字</button>
-      <button class="ghost" type="button" id="giveUp">放弃（主机）</button>
-    </div>
-  </div>
-
-  <div class="card" id="playersCard" hidden>
-    <div class="muted" style="margin-bottom:6px">一起猜的人（括号里是各自猜的次数）</div>
+  <!-- 比分 -->
+  <div class="card" id="scoreCard" hidden>
+    <div class="topline"><span id="turnLine"></span><span id="targetLine"></span></div>
     <div class="chips" id="players"></div>
   </div>
 
+  <!-- 输入 -->
   <form class="card" id="guessForm" hidden novalidate>
     <div class="row">
-      <input type="text" id="guess" lang="zh-CN" maxlength="12" autocomplete="off" autocapitalize="off"
-             spellcheck="false" enterkeyhint="send" placeholder="输入任意中文词语，例如：春天">
-      <button class="main" type="submit" id="guessBtn">猜</button>
+      <input type="text" id="guess" lang="zh-CN" maxlength="8" autocomplete="off" autocapitalize="off"
+             spellcheck="false" enterkeyhint="send" placeholder="想一个词，例如：春天">
+      <button class="main" type="submit" id="guessBtn">提交</button>
     </div>
     <div class="msg" id="msg" aria-live="polite"></div>
-    <div class="muted">你猜一个词，AI 会给出一个"中间词"——意思介于你猜的词和秘密词之间。顺着中间词的线索继续猜，直到猜中秘密词。大家猜的是同一个词，记录共用。</div>
   </form>
 
+  <!-- 已提交，等待其他人 / AI 思考中 -->
+  <div class="card wait" id="waitCard" hidden>
+    <div id="waitTop"></div>
+    <div class="mine" id="waitMine"></div>
+    <div class="muted" id="waitSub"></div>
+    <button class="ghost" type="button" id="reveal" hidden style="margin-top:10px">现在揭晓（主机）</button>
+  </div>
+
+  <!-- 结束 -->
   <div class="card result" id="resultCard" hidden>
     <div class="big" id="resultTitle"></div>
     <div class="muted" id="resultSub"></div>
@@ -95,55 +87,57 @@
     <div class="muted" id="waitNext" style="margin-top:12px" hidden>等待主机开始下一局…</div>
   </div>
 
+  <!-- 记录 -->
   <div class="card" id="listCard" hidden>
-    <div class="muted" style="margin-bottom:4px">猜测记录（最新在最上面）</div>
+    <div class="muted" style="margin-bottom:4px">每一轮的词（最新在最上面）</div>
     <div id="list"></div>
+  </div>
+
+  <div class="card">
+    <div class="muted">
+      <b>规则</b>：每一轮，你们和 🤖 AI 同时秘密说一个词。揭晓后，只要有两个或更多的"人"说了同一个词（AI 也算一个），说这个词的每个人各得 1 分。
+      没有人相同时，AI 会根据场上所有的词想一个"中间词"，当作它下一轮说的词——想想它会说什么，让大家的词越来越接近。
+      先到目标分数的赢。这一局里说过的词不能再说。只有你一个人时，就是你和 AI 对玩。
+    </div>
   </div>
 </main>
 
 <script type="module">
 import {CONFIG} from './config.js'
-import {allWords} from './words.js'
 import {createLobby} from '../../shared/lobby.js'
-import {chars, cleanGuess, validateGuess, maxReveals, pickSecret, validMiddle,
-        MAX_GUESSES, isId, pickLeader, newSid, parseGuessMsg, parseHintMsg, parseRes, parseState, isNewer} from './logic.js'
+import {chars, cleanGuess, validateWord, pickStarter, validAiWord, groupMatches, MAX_LOG,
+        isId, pickLeader, newSid, parseSubmitMsg, parseRes, parseState, isNewer} from './logic.js'
 
 const $ = id => document.getElementById(id)
 $('back').href = '../../' + location.search   // 独立打开时，返回时保留 ?s= 参数
 
-const WORDS = allWords()
-
 // =====================================================================================
 // 玩法与联机方式
-//   · 房主就是"主机"：只有主机持有秘密词，并负责请求 AI（经 Cloudflare Worker，Gemini 的 Key 在 Worker 里）。
-//     每个人（含主机）猜的词都发给主机，主机拿到"中间词"后把整局的公共状态广播给大家。
-//   · 秘密词在猜出来或放弃之前不会离开主机的页面。
+//   · 房主就是"主机"：持有 AI 的词、收集大家提交的词、揭晓、算分，并负责请求 AI（经 Cloudflare Worker）。
+//   · 提交的词在揭晓前只有主机知道，其他人只能看到"谁已经提交了"。AI 的词也一样，揭晓时才公开。
 //   · 公共状态每次都发完整的一份并带版本号：晚加入的人、丢了消息的人，收到下一条就追上了。
 // =====================================================================================
 
-const P = {sid: '', v: 0, r: 0, ph: 'prep', len: 0, cat: '', hc: 0, ans: '', note: '', wn: -1, ids: [], rv: new Map(), G: []}
-function resetPublic() {
-  Object.assign(P, {sid: '', v: 0, r: 0, ph: 'prep', len: 0, cat: '', hc: 0, ans: '', note: '', wn: -1, ids: [], rv: new Map(), G: []})
-}
-const stateMsg = () => ({t: 'st', sid: P.sid, v: P.v, r: P.r, ph: P.ph, len: P.len, cat: P.cat, hc: P.hc,
-                         ans: P.ans, note: P.note, wn: P.wn, ids: P.ids, rv: [...P.rv], G: P.G})
-function applyState(s) {
-  Object.assign(P, {sid: s.sid, v: s.v, r: s.r, ph: s.ph, len: s.len, cat: s.cat, hc: s.hc, ans: s.ans,
-                    note: s.note, wn: s.wn, ids: s.ids, rv: new Map(s.rv), G: s.G})
-}
+const blank = () => ({sid: '', v: 0, r: 0, rd: 0, ph: 'prep', turn: 0, tg: CONFIG.TARGET_SCORE, ai: 0, note: '',
+                      ids: [], sc: [], sub: [], L: []})
+const P = blank()
+const resetPublic = () => Object.assign(P, blank())
+const stateMsg = () => ({t: 'st', sid: P.sid, v: P.v, r: P.r, rd: P.rd, ph: P.ph, turn: P.turn, tg: P.tg, ai: P.ai, note: P.note,
+                         ids: P.ids, sc: P.sc, sub: P.sub, L: P.L})
+const applyState = s => Object.assign(P, s)
 
 // 只有主机用的私有状态
-const H = {gen: 0, secret: null, queue: [], current: null, working: false, lastWord: '', nextAt: 0,
-           last: new Map(), cache: new Map() /* 猜的词 → 中间词（本局） */}
+const H = {gen: 0, ai: '' /* AI 这一轮要说的词 */, sub: new Map() /* 玩家 id → 词 */, used: new Set() /* 本局已揭晓过的词 */, timer: 0}
 
 // 每个人自己的界面状态
-const U = {busy: false, pendingId: -1, pendingWord: '', timer: 0, seq: 0, msg: '', msgCls: ''}
+const U = {busy: false, pendingId: -1, timer: 0, seq: 0, msg: '', msgCls: '', sent: null /* {key, word} */}
 
 let room = null, act = null, selfId = null, leader = null, booted = false
 const peers = new Set()
 const isHost = () => !!selfId && leader === selfId
 const nameOf = id => (room && room.names && room.names[id]) || (id === selfId ? '我' : '玩家' + String(id).slice(-4))
-const sleep = ms => new Promise(r => setTimeout(r, ms))
+const present = () => [selfId, ...peers]
+const turnKey = () => P.r + ':' + P.rd + ':' + P.turn
 
 function sendTo(target, msg) {
   if (!act) return
@@ -152,14 +146,14 @@ function sendTo(target, msg) {
 function broadcast() { if (peers.size) sendTo(null, stateMsg()) }
 function bump() { P.v++; broadcast(); render() }
 
-// ---------- 向 Worker 要一个中间词（只有主机会调用） ----------
-async function askMiddle(secret, guess, avoid) {
+// ---------- 向 Worker 要"中间词"（只有主机会调用） ----------
+async function askBlend(words, avoid) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 25000)
   try {
-    const body = {secret, guess}
+    const body = {words}
     if (avoid.length) body.avoid = avoid
-    const res = await fetch(CONFIG.MIDDLE_URL, {
+    const res = await fetch(CONFIG.BLEND_URL, {
       method: 'POST', headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, signal: ctrl.signal,
       body: JSON.stringify(body)
     })
@@ -170,34 +164,64 @@ async function askMiddle(secret, guess, avoid) {
 }
 
 function explain(e) {
-  if (e && e.name === 'AbortError') return 'AI 响应超时了，请再试一次。'
+  if (e && e.name === 'AbortError') return '超时'
   const s = e && e.status
-  if (s === 429) return 'AI 太忙了（免费额度限速），等一会再猜。'
-  if (s === 500) return '主机的 Worker 还没配置好 Gemini Key。'
-  if (s === 502) return 'AI 这次没给出可用的答案，请再试一次。'
-  if (s === 422) return 'Worker 不认这个请求：多半是 Worker 里还是旧代码，请粘贴新的 proxy-worker.js 并 Deploy。'
-  if (s === 403) return '这个网站没有被 Worker 允许访问。'
-  if (e instanceof TypeError) return '网络连接失败（网络不通，或被浏览器拦截）。'
-  return '出错了：' + String(e && e.message || e).slice(0, 40)
+  if (s === 429) return '额度限速'
+  if (s === 500) return 'Worker 没配置 Key'
+  if (s === 422 || s === 404) return 'Worker 还是旧代码'
+  if (s === 502) return '没给出可用的词'
+  if (e instanceof TypeError) return '网络不通'
+  return String(e && e.message || e).slice(0, 20)
+}
+
+async function getBlend(words, gen) {
+  const avoid = []
+  for (let i = 0; i < CONFIG.MAX_TRIES; i++) {
+    const mid = await askBlend(words, avoid)
+    if (gen !== H.gen || P.ph !== 'think') return ''
+    if (validAiWord(mid, H.used)) return mid
+    if (/^\p{Script=Han}{1,12}$/u.test(mid)) avoid.push(mid)
+  }
+  throw Object.assign(new Error('no usable'), {status: 502})
 }
 
 // =====================================================================================
-// 主机：开局、处理猜测与提示
+// 主机：开局、收词、揭晓
 // =====================================================================================
-function startRound() {
+function ensurePlayer(id) {
+  let i = P.ids.indexOf(id)
+  if (i < 0) { P.ids.push(id); P.sc.push(0); i = P.ids.length - 1 }
+  return i
+}
+const syncSub = () => { P.sub = [...H.sub.keys()].map(id => P.ids.indexOf(id)).filter(i => i >= 0) }
+
+function armTimer() {
+  clearTimeout(H.timer)
+  H.timer = setTimeout(() => {
+    if (!isHost() || P.ph !== 'collect') return
+    if (H.sub.size) reveal(); else armTimer()      // 一个人都没提交：不白白请求 AI，继续等
+  }, CONFIG.TURN_SECONDS * 1000)
+}
+
+// 新的一局（分数清零）
+function newGame() {
   if (!isHost()) return
   H.gen++
-  H.queue.length = 0
-  H.cache.clear()
-  const keep = {sid: P.sid, v: P.v, r: P.r}
-  resetPublic()
-  Object.assign(P, keep)
-  P.r++
-  H.secret = pickSecret(WORDS, Math.random, H.lastWord)
-  H.lastWord = H.secret.word
-  P.len = chars(H.secret.word).length
-  P.ph = 'play'
-  U.msg = ''; U.msgCls = ''
+  clearTimeout(H.timer)
+  const keep = {sid: P.sid, v: P.v, r: P.r + 1}
+  resetPublic(); Object.assign(P, keep)
+  P.rd = 1
+  present().forEach(ensurePlayer)
+  U.msg = ''; U.msgCls = ''; U.sent = null
+  startRound()
+}
+
+// 一个新的"词局"：AI 说一个开头的词，大家从零开始往一起靠
+function startRound() {
+  H.used.clear(); H.sub.clear()
+  H.ai = pickStarter([], Math.random)
+  P.turn = 1; P.sub = []; P.ph = 'collect'; P.note = ''
+  armTimer()
   bump()
   focusGuess()
 }
@@ -207,88 +231,49 @@ function deliverRes(to, res) {
   else sendTo(to, res)
 }
 
-// 排队：同一个人同时只排一个；AI 额度有限，所以也限速限量
-function enqueueGuess(from, id, word) {
+function submitWord(from, id, word) {
   const reject = m => deliverRes(from, {t: 'res', id, ok: false, m})
-  if (P.ph !== 'play') return reject('这一局还没开始，或已经结束了')
-  if (H.queue.some(j => j.from === from) || (H.current && H.current.from === from)) return reject('上一个词还在计算，请稍等')
-  if (H.queue.length >= 12) return reject('主机这边排队的人太多了，请稍后再试')
-  const now = Date.now()
-  if (from !== selfId && now - (H.last.get(from) || 0) < 500) return reject('猜得太快了，慢一点')
-  H.last.set(from, now)
-  H.queue.push({from, id, word, gen: H.gen})
-  pump()
+  if (P.ph !== 'collect') return reject('现在还不能提交，请稍等')
+  if (H.sub.has(from)) return reject('你这一轮已经提交过了')
+  const bad = validateWord(word)
+  if (bad) return reject(bad)
+  if (H.used.has(word)) return reject(`「${word}」这一局已经出现过了，换一个吧`)
+  ensurePlayer(from)
+  H.sub.set(from, word)
+  syncSub()
+  deliverRes(from, {t: 'res', id, ok: true, m: '已提交'})
+  if (present().every(x => H.sub.has(x))) reveal(); else bump()
 }
 
-async function pump() {
-  if (H.working) return
-  H.working = true
-  try {
-    while (H.queue.length) {
-      const job = H.queue.shift()
-      H.current = job
-      try { await processGuess(job) }
-      catch (e) { console.error(e); deliverRes(job.from, {t: 'res', id: job.id, ok: false, m: '主机这边出错了，请再试一次'}) }
-    }
-  } finally { H.working = false; H.current = null }
-}
+// 揭晓：算相同的词、加分；没人相同就让 AI 想下一轮的词
+async function reveal() {
+  if (!isHost() || P.ph !== 'collect' || !H.sub.size) return
+  clearTimeout(H.timer)
+  const gen = ++H.gen
+  const entries = [...H.sub].map(([id, w]) => [ensurePlayer(id), w])
+  entries.push([-1, H.ai])
+  const groups = groupMatches(entries)
+  for (const g of groups) for (const who of g.who) { if (who < 0) P.ai++; else P.sc[who]++ }
+  P.L.push([P.turn, P.rd, entries, groups.map(g => g.word)])
+  while (P.L.length > MAX_LOG) P.L.shift()
+  entries.forEach(e => H.used.add(e[1]))
+  H.sub.clear(); P.sub = []
 
-// 取得这个词对应的中间词：本局缓存 → 请求 AI（最多 MAX_TRIES 次，不合格的词放进 avoid 让它换一个）
-async function getMiddle(word, gen) {
-  const cached = H.cache.get(word)
-  if (cached) return cached
-  const secret = H.secret.word
-  const avoid = []
-  for (let i = 0; i < CONFIG.MAX_TRIES; i++) {
-    const wait = H.nextAt - Date.now()                         // 控制调用频率，保护免费额度
-    if (wait > 0) await sleep(wait)
-    if (gen !== H.gen || P.ph !== 'play') return null
-    H.nextAt = Date.now() + CONFIG.MIN_GAP_MS
-    const mid = await askMiddle(secret, word, avoid)
-    if (gen !== H.gen || P.ph !== 'play') return null
-    if (validMiddle(mid, secret, word)) { H.cache.set(word, mid); return mid }
-    if (/^\p{Script=Han}{1,8}$/u.test(mid)) avoid.push(mid)
-  }
-  throw Object.assign(new Error('no usable'), {status: 502})
-}
+  if (Math.max(P.ai, ...P.sc) >= P.tg) { P.ph = 'over'; P.note = ''; bump(); return }
+  if (groups.length) { P.rd++; startRound(); return }       // 有人说到一起了：开始新的一个词局
 
-async function processGuess({from, id, word, gen}) {
-  const fail = m => deliverRes(from, {t: 'res', id, ok: false, m})
-  if (gen !== H.gen || P.ph !== 'play' || !H.secret) return fail('这一局已经结束了')
-  const ex = P.G.find(g => g[0] === word)
-  if (ex) return fail(`「${word}」已经有人猜过了，中间词是「${ex[1]}」`)
-  if (P.G.length >= MAX_GUESSES) return fail(`这一局的猜测已达 ${MAX_GUESSES} 次上限，请主机放弃后重开`)
-
-  const isSecret = word === H.secret.word
+  P.ph = 'think'; P.note = ''
+  bump()
   let mid = ''
-  if (!isSecret) {
-    try { mid = await getMiddle(word, gen) }
-    catch (e) { if (gen !== H.gen) return; return fail(explain(e)) }
-    if (mid === null) return fail('这一局已经结束了')
-    if (P.G.some(g => g[0] === word)) return fail(`「${word}」刚刚已经有人猜过了`)   // 等 AI 的时候别人也猜了同一个词
-  }
-  let idx = P.ids.indexOf(from)
-  if (idx < 0) { P.ids.push(from); idx = P.ids.length - 1 }
-  P.G.push([word, mid, idx, P.G.length + 1])
-  if (isSecret) { P.ph = 'won'; P.ans = word; P.wn = idx }
-  deliverRes(from, {t: 'res', id, ok: true, w: mid, m: isSecret ? '猜对了！' : '已记录'})
+  try { mid = await getBlend([...new Set(entries.map(e => e[1]))], gen) }
+  catch (e) { if (gen !== H.gen) return; P.note = `AI 这次没想出中间词（${explain(e)}），随机换了一个词` }
+  if (gen !== H.gen || P.ph !== 'think') return
+  if (!mid) mid = pickStarter([...H.used], Math.random)
+  H.ai = mid
+  P.turn++; P.ph = 'collect'
+  armTimer()
   bump()
-}
-
-function applyHint(kind) {
-  if (!isHost() || P.ph !== 'play' || !H.secret) return
-  if (kind === 'cat') {
-    if (P.cat) return
-    P.cat = H.secret.category
-  } else {
-    if (P.rv.size >= maxReveals(H.secret.word)) return
-    const cs = chars(H.secret.word)
-    const left = cs.map((_, i) => i).filter(i => !P.rv.has(i))
-    const i = left[Math.floor(Math.random() * left.length)]
-    P.rv.set(i, cs[i])
-  }
-  P.hc++
-  bump()
+  focusGuess()
 }
 
 // =====================================================================================
@@ -298,8 +283,7 @@ function onMsg(d, from) {
   if (!d || typeof d !== 'object' || !isId(from) || from === selfId || !selfId) return
   if (isHost()) {
     if (!peers.has(from)) return
-    if (d.t === 'g') { const g = parseGuessMsg(d); if (g) enqueueGuess(from, g.id, g.w) }
-    else if (d.t === 'h') { const h = parseHintMsg(d); if (h) applyHint(h.k) }
+    if (d.t === 'w') { const m = parseSubmitMsg(d); if (m) submitWord(from, m.id, m.w) }
     else if (d.t === 'hi') { if (P.sid) sendTo(from, stateMsg()) }
   } else if (from === leader) {
     if (d.t === 'st') {
@@ -311,13 +295,10 @@ function onMsg(d, from) {
 
 function onRes(res) {
   if (!res || res.id !== U.pendingId) return
-  const word = U.pendingWord
+  const key = U.pendingKey, word = U.pendingWord
   cancelPending()
-  if (res.ok) {
-    U.msg = res.w ? `「${word}」→ 中间词：「${res.w}」` : res.m
-    U.msgCls = res.w ? '' : 'ok'
-    $('guess').value = ''
-  } else { U.msg = res.m; U.msgCls = 'warn' }
+  if (res.ok) { U.sent = {key, word}; U.msg = ''; U.msgCls = ''; $('guess').value = '' }
+  else { U.msg = res.m; U.msgCls = 'warn' }
   render()
   focusGuess()
 }
@@ -332,12 +313,12 @@ function syncLeader() {
   const nl = pickLeader(room && room.host, selfId, peers)
   if (nl === leader) return
   leader = nl
-  H.gen++; H.queue.length = 0
+  H.gen++; clearTimeout(H.timer); H.sub.clear()
   cancelPending()
-  U.msg = ''; U.msgCls = ''
+  U.msg = ''; U.msgCls = ''; U.sent = null
   resetPublic()
-  if (leader === selfId) { P.sid = newSid(); startRound() }   // 我成了主机：新开一局（新的 sid 让别人知道换了主机）
-  else if (leader) sendTo(leader, {t: 'hi'})                  // 我不是主机：向主机要当前状态
+  if (leader === selfId) { P.sid = newSid(); newGame() }       // 我成了主机：新开一局（新的 sid 让别人知道换了主机）
+  else if (leader) sendTo(leader, {t: 'hi'})                   // 我不是主机：向主机要当前状态
   render()
 }
 
@@ -345,15 +326,20 @@ function onJoin(id) {
   if (!isId(id) || id === selfId || peers.has(id)) return
   peers.add(id)
   if (!selfId) return
-  if (isHost() && P.sid) sendTo(id, stateMsg())
-  syncLeader(); render()
+  const was = leader
+  syncLeader()
+  if (isHost() && was === leader && P.sid) { ensurePlayer(id); bump() }   // 有人中途加入：把当前进度发给他
+  else render()
 }
 function onLeave(id) {
   if (!peers.delete(id)) return
-  H.last.delete(id)
-  for (let i = H.queue.length - 1; i >= 0; i--) if (H.queue[i].from === id) H.queue.splice(i, 1)
   if (!selfId) return
-  syncLeader(); render()
+  const was = leader
+  syncLeader()
+  if (isHost() && was === leader) {
+    H.sub.delete(id); syncSub()
+    if (P.ph === 'collect' && H.sub.size && present().every(x => H.sub.has(x))) reveal(); else bump()
+  } else render()
 }
 
 function boot() {
@@ -372,151 +358,151 @@ function soloBoot() { if (!selfId) { selfId = 'solo-' + Math.random().toString(3
 // 操作
 // =====================================================================================
 function focusGuess() {
-  if (P.ph === 'play' && !U.busy && matchMedia('(pointer:fine)').matches) $('guess').focus({preventScroll: true})
+  if (P.ph === 'collect' && !mySubmitted() && !U.busy && matchMedia('(pointer:fine)').matches) $('guess').focus({preventScroll: true})
 }
 
 function say(text, cls) { U.msg = text; U.msgCls = cls || ''; $('msg').textContent = text; $('msg').className = 'msg ' + (cls || '') }
 
-function submitGuess() {
-  if (P.ph !== 'play' || U.busy || !leader) return
-  const word = cleanGuess($('guess').value)
-  const bad = validateGuess(word)
-  if (bad) return say(bad, 'bad')
-  const ex = P.G.find(g => g[0] === word)
-  if (ex) { say(`「${word}」已经有人猜过了，中间词是「${ex[1]}」`, 'warn'); return render() }
+const meIdx = () => P.ids.indexOf(selfId)
+const mySubmitted = () => meIdx() >= 0 && P.sub.includes(meIdx())
 
+function submitGuess() {
+  if (P.ph !== 'collect' || U.busy || !leader || mySubmitted()) return
+  const word = cleanGuess($('guess').value)
+  const bad = validateWord(word)
+  if (bad) return say(bad, 'bad')
   const id = ++U.seq
-  U.busy = true; U.pendingId = id; U.pendingWord = word
+  U.busy = true; U.pendingId = id; U.pendingKey = turnKey(); U.pendingWord = word
   say('', '')
-  if (isHost()) enqueueGuess(selfId, id, word)
+  if (isHost()) submitWord(selfId, id, word)
   else {
-    sendTo(leader, {t: 'g', id, w: word})
-    U.timer = setTimeout(() => {
+    sendTo(leader, {t: 'w', id, w: word})
+    U.timer = setTimeout(() => {                    // 主机一直不回：放开输入，让玩家可以重试
       if (U.pendingId !== id) return
       cancelPending(); U.msg = '主机没有响应，请稍后再试'; U.msgCls = 'warn'; render()
-    }, 60000)
+    }, 15000)
   }
   render()
 }
 
-function askHint(kind) {
-  if (P.ph !== 'play') return
-  if (isHost()) applyHint(kind)
-  else sendTo(leader, {t: 'h', k: kind})
-}
-
 $('guessForm').onsubmit = e => { e.preventDefault(); submitGuess() }
-$('hCat').onclick = () => askHint('cat')
-$('hChar').onclick = () => askHint('char')
-$('giveUp').onclick = () => {
-  if (!isHost() || P.ph !== 'play' || !H.secret) return
-  P.ph = 'gave'; P.ans = H.secret.word; bump()
-}
-$('again').onclick = () => { if (isHost() && (P.ph === 'won' || P.ph === 'gave')) startRound() }
+$('reveal').onclick = () => { if (isHost()) reveal() }
+$('again').onclick = () => { if (isHost() && P.ph === 'over') newGame() }
 
 // =====================================================================================
 // 画面
 // =====================================================================================
+const whoName = idx => idx < 0 ? '🤖 AI' : (P.ids[idx] === selfId ? '你' : nameOf(P.ids[idx]))
+
 function render() {
   const host = isHost()
   const ph = P.ph
-  const over = ph === 'won' || ph === 'gave'
-  const inGame = ph === 'play' || over
-  const mask = () => Array.from({length: P.len}, (_, i) => P.rv.has(i) ? P.rv.get(i) : '○').join(' ')
+  const inGame = ph === 'collect' || ph === 'think' || ph === 'over'
 
   let role = '正在连接…'
   if (selfId && leader) {
-    if (host) role = peers.size ? '👑 你是主机：所有人猜的词都由你的页面向 AI 要中间词' : '👑 你是主机：目前只有你一个人，其他人加入后会一起猜同一个词'
-    else role = `由主机「${nameOf(leader)}」向 AI 要中间词`
+    if (host) role = peers.size ? '👑 你是主机：收词、揭晓和请求 AI 都由你的页面完成' : '👑 你是主机：目前只有你一个人，你和 AI 对玩；其他人加入后会一起玩'
+    else role = `主机是「${nameOf(leader)}」，AI 由主机代为请求`
   }
   $('roleLine').textContent = role
 
-  const waiting = !inGame
-  $('stateCard').hidden = !waiting
-  if (waiting) $('stateText').textContent = host ? '正在准备题目…' : !P.sid ? (leader ? '正在等待主机出题…' : '正在连接…') : (P.note || '主机正在准备题目…')
+  $('stateCard').hidden = inGame
+  if (!inGame) $('stateText').textContent = host ? '正在准备…' : !P.sid ? (leader ? '正在等待主机…' : '正在连接…') : '主机正在准备…'
 
-  $('board').hidden = !inGame
-  $('len').textContent = P.len ? `秘密词一共 ${P.len} 个字` : ''
-  $('count').textContent = `已猜 ${P.G.length} 次 · 提示 ${P.hc} 次`
-  $('mask').textContent = over ? chars(P.ans).join(' ') : mask()
-  $('catLine').textContent = P.cat ? `类别：${P.cat}` : ''
-  const left = maxReveals('x'.repeat(P.len || 4)) - P.rv.size
-  $('hCat').disabled = ph !== 'play' || !!P.cat
-  $('hChar').disabled = ph !== 'play' || left <= 0
-  $('hChar').textContent = `提示：揭示一个字（剩 ${Math.max(left, 0)} 次）`
-  $('giveUp').hidden = !host
-  $('giveUp').disabled = ph !== 'play'
-
+  // 比分
+  $('scoreCard').hidden = !inGame
+  $('turnLine').textContent = P.turn ? `第 ${P.rd} 个词局 · 第 ${P.turn} 轮` : ''
+  $('targetLine').textContent = `先到 ${P.tg} 分获胜`
   renderPlayers(inGame)
 
-  $('guessForm').hidden = ph !== 'play'
+  // 输入 / 等待
+  const submitted = mySubmitted()
+  const here = new Set(present())
+  const need = P.ids.filter(id => here.has(id)).length || 1
+  $('guessForm').hidden = !(ph === 'collect' && !submitted)
   $('guess').disabled = U.busy
   $('guessBtn').disabled = U.busy
-  $('guessBtn').textContent = U.busy ? '思考中…' : '猜'
-  $('msg').textContent = U.msg; $('msg').className = 'msg ' + U.msgCls
+  const noteInForm = !U.msg && ph === 'collect' && !submitted && P.note
+  $('msg').textContent = U.msg || (noteInForm ? P.note : ''); $('msg').className = 'msg ' + (U.msg ? U.msgCls : noteInForm ? 'warn' : '')
 
-  $('resultCard').hidden = !over
-  $('resultCard').className = 'card result' + (ph === 'won' ? ' win' : '')
-  if (over) {
-    const sum = `一共猜了 ${P.G.length} 次，用了 ${P.hc} 次提示`
-    if (ph === 'won') {
-      const who = P.wn >= 0 ? P.ids[P.wn] : null
-      $('resultTitle').textContent = `🎉 ${who ? (who === selfId ? '你' : nameOf(who)) : '有人'}猜对了！答案是「${P.ans}」`
-      $('resultSub').textContent = sum
+  const waiting = (ph === 'collect' && submitted) || ph === 'think'
+  $('waitCard').hidden = !waiting
+  if (waiting) {
+    if (ph === 'think') {
+      $('waitTop').textContent = '揭晓了！AI 正在想中间词…'
+      $('waitMine').textContent = ''
+      $('waitSub').textContent = ''
     } else {
-      $('resultTitle').textContent = `主机放弃了，答案是「${P.ans}」`
-      $('resultSub').textContent = '下次加油！'
+      $('waitTop').textContent = '你已提交'
+      $('waitMine').textContent = U.sent && U.sent.key === turnKey() ? `「${U.sent.word}」` : ''
+      $('waitSub').textContent = `已提交 ${P.sub.length}/${need}，等其他人…`
     }
+  }
+  $('reveal').hidden = !(host && ph === 'collect' && P.sub.length > 0 && P.sub.length < need)
+  if (waiting && ph === 'collect' && P.note) $('waitSub').textContent += ' ' + P.note
+
+  // 结果
+  $('resultCard').hidden = ph !== 'over'
+  if (ph === 'over') {
+    const best = Math.max(P.ai, ...P.sc)
+    const winners = []
+    P.ids.forEach((id, i) => { if (P.sc[i] === best) winners.push(id === selfId ? '你' : nameOf(id)) })
+    if (P.ai === best) winners.push('🤖 AI')
+    $('resultTitle').textContent = (winners.length === 1 && winners[0] === '🤖 AI') ? '🤖 AI 赢了！' : `🎉 ${winners.join('、')} 赢了！`
+    $('resultSub').textContent = `${best} 分 · 共 ${P.L.length} 轮`
   }
   $('again').hidden = !host
   $('waitNext').hidden = host
 
-  $('listCard').hidden = !P.G.length
+  $('listCard').hidden = !P.L.length
   renderList()
 }
 
 function renderPlayers(show) {
-  const card = $('playersCard'), box = $('players')
-  card.hidden = !(show && selfId && leader)
+  const box = $('players')
   box.textContent = ''
-  if (card.hidden) return
-  const others = [...new Set([selfId, ...peers])].filter(id => id !== leader).sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'zh'))
-  for (const id of [leader, ...others]) {
-    const n = P.G.filter(g => P.ids[g[2]] === id).length
+  if (!show) return
+  const here = new Set(present())
+  const add = (label, score, me) => {
     const chip = document.createElement('span')
-    chip.className = 'chip' + (id === selfId ? ' me' : '')
-    chip.textContent = `${id === leader ? '👑 ' : ''}${nameOf(id)}${id === selfId ? '（你）' : ''}（${n}）`
+    chip.className = 'chip' + (me ? ' me' : '')
+    chip.append(label + ' ')
+    const b = document.createElement('b'); b.textContent = score
+    chip.appendChild(b)
     box.appendChild(chip)
   }
+  const order = P.ids.map((id, i) => i).filter(i => here.has(P.ids[i]))
+  order.sort((a, b) => (P.ids[a] === leader ? -1 : 0) - (P.ids[b] === leader ? -1 : 0) || P.sc[b] - P.sc[a])
+  for (const i of order) {
+    const id = P.ids[i]
+    add(`${id === leader ? '👑 ' : ''}${id === selfId ? '你' : nameOf(id)}${P.sub.includes(i) && P.ph === 'collect' ? ' ✓' : ''}`, P.sc[i], id === selfId)
+  }
+  add('🤖 AI', P.ai, false)
 }
 
 function renderList() {
   const box = $('list')
   box.textContent = ''
-  const newest = P.G.reduce((m, g) => Math.max(m, g[3]), 0)
-  for (const [word, mid, by, n] of [...P.G].sort((a, b) => b[3] - a[3])) {
-    const item = document.createElement('div')
-    item.className = 'item' + (n === newest ? ' new' : '') + (mid ? '' : ' win')
-    const top = document.createElement('div'); top.className = 'top'
-    const w = document.createElement('span'); w.className = 'w'; w.textContent = word
-    top.appendChild(w)
-    if (mid) {
-      const ar = document.createElement('span'); ar.className = 'arrow'; ar.textContent = '→'
-      const m = document.createElement('span'); m.className = 'mid'; m.textContent = mid
-      top.append(ar, m)
-    } else {
-      const m = document.createElement('span'); m.className = 'mid'; m.textContent = '🎉 就是它！'
-      top.appendChild(m)
+  const rows = [...P.L].reverse()
+  rows.forEach((t, k) => {
+    const [turn, rd, entries, hits] = t
+    const div = document.createElement('div')
+    div.className = 'turn' + (k === 0 ? ' new' : '')
+    const head = document.createElement('div'); head.className = 'head'
+    head.textContent = `第 ${rd} 个词局 · 第 ${turn} 轮`
+    const words = document.createElement('div'); words.className = 'words'
+    for (const [who, word] of entries) {
+      const w = document.createElement('span'); w.className = 'w' + (hits.includes(word) ? ' hit' : '')
+      w.append(word)
+      const s = document.createElement('small'); s.textContent = whoName(who)
+      w.appendChild(s)
+      words.appendChild(w)
     }
-    top.style.justifyContent = 'flex-start'; top.style.gap = '10px'; top.style.flexWrap = 'wrap'
-    const who = P.ids[by]
-    const sub = document.createElement('div'); sub.className = 'sub'
-    const a = document.createElement('span'); a.textContent = who ? (who === selfId ? '你' : nameOf(who)) : ''
-    const b = document.createElement('span'); b.textContent = '第 ' + n + ' 次'
-    sub.append(a, b)
-    item.append(top, sub)
-    box.appendChild(item)
-  }
+    const res = document.createElement('div'); res.className = 'res ' + (hits.length ? 'ok' : 'none')
+    res.textContent = hits.length ? `✅ 说到一起了：${hits.map(h => '「' + h + '」').join('、')}，各得 1 分` : '没有人相同，AI 根据这些词想了一个中间词'
+    div.append(head, words, res)
+    box.appendChild(div)
+  })
 }
 
 // =====================================================================================

@@ -1,13 +1,12 @@
 // 「中间词」游戏的设置。
 export const CONFIG = {
-  // 和「秘密词」共用同一个 Cloudflare Worker，路径是 /middle。
-  // Gemini 的 Key 存在 Worker 的 Secret（GEMINI_API_KEY）里，页面和 GitHub 上都看不到。
-  MIDDLE_URL: 'https://jina-proxy.chaijieqing2718.workers.dev/middle',
+  // 和「秘密词」共用同一个 Cloudflare Worker，路径是 /blend。
+  // 智谱 / Gemini 的 Key 存在 Worker 的 Secret 里，页面和 GitHub 上都看不到。
+  BLEND_URL: 'https://jina-proxy.chaijieqing2718.workers.dev/blend',
 
-  // 主机两次请求 AI 之间至少隔多久。Gemini 免费额度按"每分钟请求数"限速（Flash-Lite 约 10 次/分钟/模型），
-  // Worker 里放了两个模型轮换，所以大约每 3 秒一次比较稳；觉得慢或者经常提示"AI 太忙"可以调这个数。
-  MIN_GAP_MS: 2500,
+  TARGET_SCORE: 5,      // 先到多少分获胜（玩家和 AI 都算）
+  TURN_SECONDS: 90,     // 每一轮的等待时间：到时间后，主机按已经提交的词揭晓（有人没提交就不参加这一轮）
 
-  // AI 给出的词不合格（比如把秘密词说出来了）时，最多请求几次。
+  // AI 给出的词不合格（比如和场上的词重复）时，最多请求几次；都不行就随机换一个词，游戏继续。
   MAX_TRIES: 2
 }

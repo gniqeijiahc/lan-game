@@ -1,7 +1,8 @@
 // Cloudflare Worker：猜词游戏用的代理（一个 Worker 管两个游戏）
 //
 //   POST /        → 转发到 Jina embeddings（「秘密词」游戏）      需要 Secret：JINA_API_KEY
-//   POST /middle  → 生成"中间词"（「中间词」游戏）：先试智谱 GLM（Secret：ZHIPU_API_KEY），再试 Gemini（Secret：GEMINI_API_KEY）
+//   POST /blend   → 生成一组词的"中间词"（「中间词」游戏）；POST /middle 是两个词的旧接口，保留着
+//                   模型按顺序试：先试智谱 GLM（Secret：ZHIPU_API_KEY），再试 Gemini（Secret：GEMINI_API_KEY）
 //                   两个 Key 至少设一个。可选变量：ZHIPU_BASE、ZHIPU_MODELS、GEMINI_MODELS（模型名用逗号隔开，按顺序尝试）
 //
 // 两个 Key 都只存在 Cloudflare 里，页面和 GitHub 上都看不到。
@@ -66,6 +67,7 @@ export default {
 
     const path = new URL(request.url).pathname
     if (path === '/middle') return middle(body, env, origin)
+    if (path === '/blend') return blend(body, env, origin)
     return embeddings(body, env, origin)
   }
 }
@@ -166,19 +168,13 @@ async function askGemini(model, prompt, env) {
 const modelList = (envValue, defaults) =>
   (envValue ? String(envValue).split(',') : defaults).map(s => s.trim()).filter(s => /^[a-z0-9][a-z0-9.\-]*$/.test(s))
 
-async function middle(body, env, origin) {
-  // 提供商按顺序尝试：先智谱（免费额度大），再 Gemini；哪个的 Key 没设置就跳过
+// 提供商按顺序尝试：先智谱（免费额度大），再 Gemini；哪个的 Key 没设置就跳过
+async function generate(prompt, env, origin) {
   const steps = []
   if (env.ZHIPU_API_KEY) for (const m of modelList(env.ZHIPU_MODELS, DEFAULT_ZHIPU_MODELS)) steps.push({ask: askZhipu, model: m, prov: 'zhipu'})
   if (env.GEMINI_API_KEY) for (const m of modelList(env.GEMINI_MODELS, DEFAULT_GEMINI_MODELS)) steps.push({ask: askGemini, model: m, prov: 'gemini'})
   if (!steps.length) return json(500, {error: 'ZHIPU_API_KEY / GEMINI_API_KEY is not set'}, origin)
 
-  const secret = body && body.secret, guess = body && body.guess
-  const avoid = body && body.avoid === undefined ? [] : body && body.avoid
-  if (!validWord(secret, 2, 12) || !validWord(guess, 1, 12) || !Array.isArray(avoid) || avoid.length > 3 ||
-      avoid.some(w => !validWord(w, 1, 8))) return json(422, {error: 'invalid input'}, origin)
-
-  const prompt = buildPrompt(secret, guess, avoid)
   let last = 502
   const skip = new Set()
   for (const st of steps) {
@@ -189,4 +185,35 @@ async function middle(body, env, origin) {
     if (res.stop) skip.add(st.prov)
   }
   return json(last, {error: last === 429 ? 'rate limited' : 'no usable answer'}, origin)
+}
+
+// /middle：两个词（秘密词、猜的词）之间的中间词
+async function middle(body, env, origin) {
+  const secret = body && body.secret, guess = body && body.guess
+  const avoid = body && body.avoid === undefined ? [] : body && body.avoid
+  if (!validWord(secret, 2, 12) || !validWord(guess, 1, 12) || !Array.isArray(avoid) || avoid.length > 3 ||
+      avoid.some(w => !validWord(w, 1, 8))) return json(422, {error: 'invalid input'}, origin)
+  return generate(buildPrompt(secret, guess, avoid), env, origin)
+}
+
+// /blend：一组词（2–12 个）的中间词，给「中间词」多人游戏用
+function buildBlendPrompt(words, avoid) {
+  return [
+    '你在玩一个中文"心有灵犀"词语游戏。',
+    `场上的词：${words.join('、')}`,
+    '',
+    '请想一个"中间词"：意思处在这些词之间、能把它们联系起来的词——大多数人看到这些词时，最容易想到的那个居中的词。',
+    '要求：',
+    '1. 只输出这一个中文词语（2 到 6 个字），不要标点、引号、解释或任何其他文字。',
+    '2. 不能是场上已有的词。',
+    avoid.length ? `3. 也不要使用这些词：${avoid.join('、')}。` : ''
+  ].filter(Boolean).join('\n')
+}
+
+async function blend(body, env, origin) {
+  const words = body && body.words
+  const avoid = body && body.avoid === undefined ? [] : body && body.avoid
+  if (!Array.isArray(words) || words.length < 2 || words.length > 12 || words.some(w => !validWord(w, 1, 12)) ||
+      !Array.isArray(avoid) || avoid.length > 8 || avoid.some(w => !validWord(w, 1, 12))) return json(422, {error: 'invalid input'}, origin)
+  return generate(buildBlendPrompt(words, avoid), env, origin)
 }
