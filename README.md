@@ -30,6 +30,7 @@ shared/
 games/
   registry.js         游戏清单（新增游戏在这里登记）
   rps/ connect-four/ draw/ quoridor/   各个游戏
+  take-last/          抢最后一个（双人）：index.html 页面、config.js 玩法参数（倒计时、可拿个数）、logic.js 规则函数
   middle-word/        多人默契游戏（和 AI 一起说词，AI 生成"中间词"，房主代请求）：index.html、config.js、logic.js
   secret-word/        多人同猜（Jina 向量相似度，房主出题并代算）：index.html 页面、words.js 词库、config.js 接口设置、logic.js 计分逻辑
 ```

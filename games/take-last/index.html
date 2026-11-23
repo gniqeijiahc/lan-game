@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>抢最后一个</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  .score { display:flex; justify-content:space-around; text-align:center; }
+  .score b { display:block; font-size:28px; line-height:1.2; }
+  .score span { font-size:13px; color:var(--muted); }
+  .round { text-align:center; color:var(--muted); font-size:14px; margin-top:6px; }
+  #clock { text-align:center; font-size:40px; font-weight:800; line-height:1.2; min-height:48px;
+    font-variant-numeric:tabular-nums; }
+  #clock.low { color:var(--bad); }
+  #who { text-align:center; font-size:15px; font-weight:600; min-height:24px; }
+  #last { text-align:center; color:var(--muted); font-size:14px; min-height:22px; }
+
+  /* 场地：物体按放置者着色（蓝=我，橙=对方），拿走时从末尾减少 */
+  #pile { display:flex; flex-wrap:wrap; justify-content:center; align-content:center; gap:6px;
+    min-height:110px; padding:12px; margin:8px 0; border-radius:12px; background:var(--bg); }
+  #pile:empty::after { content:"（空）"; color:var(--muted); font-size:14px; }
+  .stone { width:clamp(16px,5.2vw,24px); aspect-ratio:1; border-radius:50%; background:var(--accent);
+    box-shadow:inset 0 -3px 0 rgba(0,0,0,.18); }
+  .stone.o { background:var(--warn); }
+  .counts { display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:14px; margin-bottom:10px; }
+  .counts .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; background:var(--accent); }
+  .counts .dot.o { background:var(--warn); }
+  .counts .mid { color:var(--muted); }
+
+  #result { text-align:center; font-size:20px; font-weight:700; min-height:30px; }
+  #result.win { color:var(--ok); } #result.lose { color:var(--bad); }
+  #hint { text-align:center; color:var(--muted); font-size:14px; min-height:22px; margin-bottom:8px; }
+
+  button.big { display:block; width:100%; min-height:64px; padding:12px; border:0; border-radius:14px;
+    background:var(--accent); color:#fff; font:inherit; font-size:20px; font-weight:700;
+    cursor:pointer; touch-action:manipulation; }
+  button.big:disabled { opacity:.4; cursor:default; }
+  button.ghost { display:block; width:100%; min-height:48px; margin-top:8px; padding:10px; border-radius:12px;
+    border:1px solid var(--line); background:transparent; color:var(--text); font:inherit;
+    cursor:pointer; touch-action:manipulation; }
+  #takeBox { display:flex; gap:10px; }
+  #takeBox button { flex:1; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>🍬 抢最后一个</h1>
+
+  <div id="lobby"></div>
+
+  <div class="card" id="game">
+    <div class="score">
+      <div><b id="sMe">0</b><span>我</span></div>
+      <div><b id="sThem">0</b><span>对方</span></div>
+    </div>
+    <div class="round" id="round">第 1 局</div>
+    <div id="clock"></div>
+    <div id="who"></div>
+
+    <div id="pile" aria-label="场上的物体"></div>
+    <div class="counts">
+      <span><i class="dot"></i>我放了 <b id="cMe">0</b></span>
+      <span class="mid" id="total"></span>
+      <span><i class="dot o"></i>对方放了 <b id="cThem">0</b></span>
+    </div>
+
+    <div id="last"></div>
+    <div id="result"></div>
+    <div id="hint" aria-live="polite"></div>
+
+    <div id="placeBox">
+      <button class="big" id="put" type="button">＋ 放一个</button>
+      <button class="ghost" id="done" type="button">放好了</button>
+    </div>
+    <div id="takeBox"></div>
+    <button class="big" id="again" type="button" hidden>再来一局</button>
+  </div>
+  <div class="muted" id="rules"></div>
+</main>
+
+<script type="module">
+import {createLobby} from '../../shared/lobby.js'
+import {CONFIG} from './config.js'
+import {legalTakes, tieFirst, whoGoesFirst} from './logic.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+const OPTS = CONFIG.TAKE_OPTIONS
+const MAX = CONFIG.MAX_PER_PLAYER
+const optText = OPTS.length === 1 ? String(OPTS[0]) : OPTS.slice(0, -1).join('、') + ' 或 ' + OPTS[OPTS.length - 1]
+
+// ---------- 状态（两边各自运行同一套规则，没有"主机"） ----------
+let room = null
+let opp = null                 // 对手 peerId
+let selfId = null              // 自己的 peerId（决定"数量一样时谁先手"要用）
+let epoch = 0                  // 每次重置 +1，用来丢弃过期的异步结果
+let g = 1                      // 内部序号：每新开一局或重放 +1，消息都带它
+let roundNo = 1                // 显示的局数（重放不算新的一局）
+let phase = 'idle'             // idle 无对手 | placing 放置阶段 | playing 轮流拿 | over 本局结束
+let myCount = 0, myDone = false, endAt = 0, timer = null
+let remaining = 0, first = null, firstTie = false   // first: 'me' | 'opp'
+let moves = [], lastTake = null, winner = null      // winner: 'me' | 'opp'
+let finalMe = 0, finalOpp = 0                       // 放置结束后双方的最终数量
+let score = {me: 0, them: 0}
+let againMine = false
+let warn = ''
+const theirPut = {}            // g -> 对方实时放的数量（只用来显示）
+const theirDone = {}           // g -> 对方放置结束时的最终数量（以此为准）
+const theirAgain = new Set()   // 对方想开的下一局的 g
+const pending = new Map()      // n -> 个数，提前到达或乱序的对方操作
+
+let putAct = null, finalAct = null, moveAct = null, againAct = null
+const send = (act, d) => act && act.send(d).catch(() => {})
+
+function clearTimer() { if (timer) { clearInterval(timer); timer = null } }
+
+function ensureSelf() {
+  if (selfId) return Promise.resolve(true)
+  return room.getSelf().then(r => { selfId = r.peerId; return !!selfId }).catch(() => false)
+}
+
+function resetGame() {
+  epoch++
+  clearTimer()
+  g = 1; roundNo = 1
+  score = {me: 0, them: 0}
+  for (const k in theirPut) delete theirPut[k]
+  for (const k in theirDone) delete theirDone[k]
+  theirAgain.clear()
+  warn = ''
+  if (opp) { ensureSelf(); startRound() }
+  else { phase = 'idle'; clearRound(); render() }
+}
+
+function clearRound() {
+  myCount = 0; myDone = false; remaining = 0; first = null; firstTie = false
+  moves = []; lastTake = null; winner = null; finalMe = 0; finalOpp = 0
+  againMine = false
+  pending.clear()
+}
+
+// ---------- 放置阶段 ----------
+function startRound() {
+  clearTimer()
+  clearRound()
+  for (const k in theirPut) if (+k < g) delete theirPut[k]
+  for (const k in theirDone) if (+k < g) delete theirDone[k]
+  for (const k of [...theirAgain]) if (k <= g) theirAgain.delete(k)
+  phase = 'placing'
+  warn = ''
+  endAt = Date.now() + CONFIG.PLACE_SECONDS * 1000
+  const ep = epoch
+  timer = setInterval(() => {
+    if (ep !== epoch) return clearTimer()
+    if (phase !== 'placing' || myDone) return clearTimer()
+    if (Date.now() >= endAt) finishPlacing()
+    else renderClock()
+  }, 250)
+  render()
+}
+
+function place() {
+  if (phase !== 'placing' || myDone || myCount >= MAX) return
+  myCount++
+  send(putAct, {g, c: myCount})
+  render()
+}
+
+function finishPlacing() {
+  if (phase !== 'placing' || myDone) return
+  myDone = true
+  clearTimer()
+  send(finalAct, {g, c: myCount})
+  render()
+  tryStartPlay()
+}
+
+// 双方都放好了：算先手、开始轮流拿
+function tryStartPlay() {
+  if (phase !== 'placing' || !myDone || !(g in theirDone)) return
+  const total = myCount + theirDone[g]
+  if (total === 0) {                      // 一个都没放，没法玩：重新放置（局数不变）
+    g++
+    startRound()
+    warn = '双方都没放物体，重新放置'
+    render()
+    return
+  }
+  if (!selfId) {
+    const ep = epoch
+    ensureSelf().then(ok => {
+      if (ep !== epoch) return
+      if (!ok) { warn = '⚠️ 无法获取自己的编号'; render(); return }
+      tryStartPlay()
+    })
+    return
+  }
+  finalMe = myCount; finalOpp = theirDone[g]
+  firstTie = finalMe === finalOpp
+  first = whoGoesFirst({selfId, oppId: opp, selfCount: finalMe, oppCount: finalOpp, roundNo})
+  remaining = total
+  phase = 'playing'
+  warn = ''
+  render()
+  drain()
+}
+
+// ---------- 轮流拿 ----------
+const turnWho = () => ((moves.length % 2 === 0) === (first === 'me')) ? 'me' : 'opp'
+
+// 双方共用：把一次拿子落到场上。调用前已校验轮次和个数。
+function applyTake(k) {
+  const who = turnWho()
+  remaining -= k
+  moves.push(k)
+  lastTake = {who, k}
+  if (remaining === 0) {                  // 拿走最后一个的人赢
+    winner = who; phase = 'over'
+    if (who === 'me') score.me++; else score.them++
+  }
+}
+
+// 处理对方提前到达或乱序的操作：只接收"下一步"
+function drain() {
+  while (phase === 'playing' && turnWho() === 'opp') {
+    const n = moves.length + 1
+    if (!pending.has(n)) break
+    const k = pending.get(n); pending.delete(n)
+    if (!legalTakes(remaining, OPTS).includes(k)) { warn = '⚠️ 收到非法操作，已忽略'; continue }
+    applyTake(k)
+  }
+  render()
+}
+
+function take(k) {
+  if (phase !== 'playing' || turnWho() !== 'me' || !legalTakes(remaining, OPTS).includes(k)) return
+  warn = ''
+  const n = moves.length + 1
+  applyTake(k)
+  send(moveAct, {g, n, k})
+  render()
+}
+
+function again() {
+  if (phase !== 'over' || !opp || againMine) return
+  againMine = true
+  send(againAct, {g: g + 1})
+  maybeNext()
+  render()
+}
+
+function maybeNext() {
+  if (phase === 'over' && againMine && theirAgain.has(g + 1)) {
+    g++; roundNo++
+    startRound()
+  }
+}
+
+// ---------- 界面 ----------
+const takeBtns = OPTS.map(k => {
+  const b = document.createElement('button')
+  b.type = 'button'; b.className = 'big'; b.textContent = `拿 ${k} 个`
+  b.onclick = () => take(k)
+  $('takeBox').appendChild(b)
+  return b
+})
+$('rules').textContent =
+  `规则：开局先有 ${CONFIG.PLACE_SECONDS} 秒放置时间，每人可以往场上放物体（最多 ${MAX} 个，也可以一个都不放）。` +
+  `放得少的人先手；一样多时，每局轮流由一方先手。之后轮流拿走 ${optText} 个，拿走最后一个的人获胜。`
+$('put').onclick = place
+$('done').onclick = finishPlacing
+$('again').onclick = again
+
+function oppCount() {
+  if (g in theirDone) return theirDone[g]
+  return theirPut[g] || 0
+}
+
+function renderClock() {
+  const c = $('clock')
+  if (phase === 'placing' && !myDone) {
+    const s = Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
+    c.textContent = `⏱ ${s}`
+    c.classList.toggle('low', s <= 5)
+  } else {
+    c.textContent = ''
+    c.classList.remove('low')
+  }
+}
+
+function renderPile() {
+  let list = []
+  if (phase === 'placing') {
+    const a = Array(myCount).fill('m'), b = Array(oppCount()).fill('o')
+    list = a.concat(b)
+  } else if (phase === 'playing' || phase === 'over') {
+    // 编号较小的一方的物体排在前面，两边看到的次序一致；拿走时从末尾减少
+    const a = Array(finalMe).fill('m'), b = Array(finalOpp).fill('o')
+    list = (selfId && opp && selfId < opp ? a.concat(b) : b.concat(a)).slice(0, remaining)
+  }
+  const frag = document.createDocumentFragment()
+  for (const t of list) {
+    const s = document.createElement('i')
+    s.className = 'stone' + (t === 'o' ? ' o' : '')
+    frag.appendChild(s)
+  }
+  $('pile').replaceChildren(frag)
+}
+
+function render() {
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('round').textContent = `第 ${roundNo} 局`
+  renderClock()
+  renderPile()
+
+  const placing = phase === 'placing', playing = phase === 'playing', over = phase === 'over'
+  const mc = placing ? myCount : finalMe, oc = placing ? oppCount() : finalOpp
+  $('cMe').textContent = (placing || playing || over) ? mc : 0
+  $('cThem').textContent = (placing || playing || over) ? oc : 0
+  $('total').textContent = placing ? `场上共 ${mc + oc} 个` : (playing || over) ? `还剩 ${remaining} 个` : ''
+
+  const myTurn = playing && turnWho() === 'me'
+  $('placeBox').hidden = !(placing && !myDone)
+  $('put').disabled = !(placing && !myDone && myCount < MAX)
+  $('put').textContent = myCount >= MAX ? `已放满 ${MAX} 个` : '＋ 放一个'
+  $('takeBox').hidden = !playing
+  takeBtns.forEach((b, i) => { b.disabled = !(myTurn && OPTS[i] <= remaining) })
+
+  let who = '', hint = '', res = '', cls = ''
+  if (phase === 'idle') hint = '等对方加入…'
+  else if (placing) {
+    if (!myDone) {
+      const tf = selfId && opp ? tieFirst({selfId, oppId: opp, roundNo}) : null
+      hint = '放得少的人先手' + (tf ? `；一样多时本局由${tf === 'me' ? '你' : '对方'}先手` : '')
+    } else hint = '你放好了，等对方放好…'
+  } else if (playing || over) {
+    const f = first === 'me' ? '你' : '对方'
+    who = `${f}先手（${firstTie ? '数量一样，轮到' + f : f + '放得少'}）`
+    if (playing) hint = myTurn ? `轮到你：拿 ${optText} 个` : '等待对方拿…'
+  }
+  if (over) {
+    if (winner === 'me') { res = '你拿走了最后一个，你赢了 🎉'; cls = 'win' }
+    else { res = '对方拿走了最后一个，你输了'; cls = 'lose' }
+    hint = againMine ? '已请求再来一局，等对方确认…' : (theirAgain.has(g + 1) ? '对方想再来一局' : '')
+  }
+  $('who').textContent = who
+  $('last').textContent = lastTake ? `${lastTake.who === 'me' ? '你' : '对方'}拿了 ${lastTake.k} 个` : ''
+  $('result').textContent = res
+  $('result').className = cls
+  $('hint').textContent = warn || hint
+  $('again').hidden = !over
+  $('again').disabled = againMine
+}
+
+clearRound()
+render()
+
+await createLobby({
+  gameId: 'take-last',
+  container: $('lobby'),
+  setup(r) {
+    room = r
+    putAct = room.makeAction('put')
+    finalAct = room.makeAction('final')
+    moveAct = room.makeAction('move')
+    againAct = room.makeAction('again')
+
+    // 对方放置过程中的实时数量（只用来显示，最终以 final 为准）
+    putAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || phase === 'idle') return
+      if (!Number.isInteger(d.g) || (d.g !== g && d.g !== g + 1)) return
+      if (!Number.isInteger(d.c) || d.c < 0 || d.c > MAX) return
+      if (d.g in theirDone || d.c <= (theirPut[d.g] || 0)) return
+      theirPut[d.g] = d.c
+      if (d.g === g) render()
+    })
+
+    // 对方放置结束，报出最终数量
+    finalAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || phase === 'idle') return
+      if (!Number.isInteger(d.g) || (d.g !== g && d.g !== g + 1)) return
+      if (!Number.isInteger(d.c) || d.c < 0 || d.c > MAX || d.g in theirDone) return
+      theirDone[d.g] = d.c
+      theirPut[d.g] = d.c
+      if (d.g === g) { render(); tryStartPlay() }
+    })
+
+    moveAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || (phase !== 'placing' && phase !== 'playing')) return
+      if (!Number.isInteger(d.g) || d.g !== g) return
+      if (!Number.isInteger(d.n) || d.n < 1 || d.n > MAX * 2) return
+      if (!Number.isInteger(d.k) || !OPTS.includes(d.k)) return
+      if (d.n <= moves.length || pending.has(d.n)) return    // 过期或重复
+      pending.set(d.n, d.k)
+      drain()
+    })
+
+    againAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || phase === 'idle') return
+      if (!Number.isInteger(d.g) || d.g !== g + 1) return
+      theirAgain.add(d.g)
+      maybeNext()
+      render()
+    })
+  },
+  onOpponentJoin(id) { opp = id; resetGame() },
+  onOpponentLeave() { opp = null; resetGame() }
+})
+</script>
+</body>
+</html>
