@@ -1,8 +1,8 @@
 // Cloudflare Worker：猜词游戏用的代理（一个 Worker 管两个游戏）
 //
 //   POST /        → 转发到 Jina embeddings（「秘密词」游戏）      需要 Secret：JINA_API_KEY
-//   POST /middle  → 用 Gemini 生成"中间词"（「中间词」游戏）       需要 Secret：GEMINI_API_KEY
-//                   可选变量 GEMINI_MODELS：用逗号隔开的模型名，按顺序尝试（默认见下面）
+//   POST /middle  → 生成"中间词"（「中间词」游戏）：先试智谱 GLM（Secret：ZHIPU_API_KEY），再试 Gemini（Secret：GEMINI_API_KEY）
+//                   两个 Key 至少设一个。可选变量：ZHIPU_BASE、ZHIPU_MODELS、GEMINI_MODELS（模型名用逗号隔开，按顺序尝试）
 //
 // 两个 Key 都只存在 Cloudflare 里，页面和 GitHub 上都看不到。
 //
@@ -31,6 +31,11 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/'
 // 模型名会随 Google 更新而变；如果某个名字失效，到 Cloudflare 的 Worker 设置里加一个变量
 // GEMINI_MODELS（例如 gemini-3.5-flash-lite,gemini-3.1-flash-lite）就能覆盖，不用改代码。
 const DEFAULT_GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+// 智谱（Z.ai / BigModel）：免费的 Flash 模型。中国站和国际站的 Key 不通用，用哪个站申请的 Key 就要选哪个地址：
+//   国际站（z.ai）的 Key：在 Worker 变量里设 ZHIPU_BASE = https://api.z.ai/api/paas/v4
+//   中国站（bigmodel.cn）的 Key：不用设（默认）
+const ZHIPU_BASES = ['https://open.bigmodel.cn/api/paas/v4', 'https://api.z.ai/api/paas/v4']
+const DEFAULT_ZHIPU_MODELS = ['glm-4.5-flash', 'glm-4.7-flash']   // 可用变量 ZHIPU_MODELS 覆盖
 const HAN = /^\p{Script=Han}+$/u
 
 function cors(origin) {
@@ -121,38 +126,67 @@ function cleanWord(text) {
   return m ? m[1] : null
 }
 
+// 一次"向某个模型要一个词"：返回 {word} 或 {status}（429=限速；502=这个模型没给出可用的词；其余=这个服务商不可用）
+async function askZhipu(model, prompt, env) {
+  const base = ZHIPU_BASES.includes(env.ZHIPU_BASE) ? env.ZHIPU_BASE : ZHIPU_BASES[0]
+  let r
+  try {
+    r = await fetch(base + '/chat/completions', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + env.ZHIPU_API_KEY},
+      body: JSON.stringify({model, messages: [{role: 'user', content: prompt}], thinking: {type: 'disabled'}, temperature: 0.6, max_tokens: 1024, stream: false})
+    })
+  } catch { return {status: 502, next: true} }
+  if (r.status === 429) return {status: 429, next: true}                 // 免费版同时只允许 1 个请求，也会返回 429
+  if (r.status === 404 || r.status >= 500) return {status: 502, next: true}
+  if (!r.ok) return {status: 502, stop: true}                            // 400/401/403：多半是 Key 有问题，换同一服务商的别的模型也没用
+  let data = null
+  try { data = await r.json() } catch {}
+  const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+  const word = cleanWord(text)
+  return word ? {word} : {status: 502, next: true}
+}
+
+async function askGemini(model, prompt, env) {
+  let r
+  try {
+    r = await fetch(GEMINI_BASE + model + ':generateContent', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY},
+      body: JSON.stringify({contents: [{role: 'user', parts: [{text: prompt}]}], generationConfig: {temperature: 0.6, maxOutputTokens: 256}})
+    })
+  } catch { return {status: 502, next: true} }
+  if (r.status === 429) return {status: 429, next: true}                 // 这个模型被限速：换下一个
+  if (r.status === 404 || r.status >= 500) return {status: 502, next: true}   // 模型名失效或 Google 出错：换下一个
+  if (!r.ok) return {status: 502, stop: true}                            // 400/401/403：多半是 Key 有问题，换模型也没用
+  let data = null
+  try { data = await r.json() } catch {}
+  const word = cleanWord(extractText(data))
+  return word ? {word} : {status: 502, next: true}                       // 空回复（被安全过滤）或回了一整句：换下一个
+}
+
+const modelList = (envValue, defaults) =>
+  (envValue ? String(envValue).split(',') : defaults).map(s => s.trim()).filter(s => /^[a-z0-9][a-z0-9.\-]*$/.test(s))
+
 async function middle(body, env, origin) {
-  if (!env.GEMINI_API_KEY) return json(500, {error: 'GEMINI_API_KEY is not set'}, origin)
+  // 提供商按顺序尝试：先智谱（免费额度大），再 Gemini；哪个的 Key 没设置就跳过
+  const steps = []
+  if (env.ZHIPU_API_KEY) for (const m of modelList(env.ZHIPU_MODELS, DEFAULT_ZHIPU_MODELS)) steps.push({ask: askZhipu, model: m, prov: 'zhipu'})
+  if (env.GEMINI_API_KEY) for (const m of modelList(env.GEMINI_MODELS, DEFAULT_GEMINI_MODELS)) steps.push({ask: askGemini, model: m, prov: 'gemini'})
+  if (!steps.length) return json(500, {error: 'ZHIPU_API_KEY / GEMINI_API_KEY is not set'}, origin)
+
   const secret = body && body.secret, guess = body && body.guess
   const avoid = body && body.avoid === undefined ? [] : body && body.avoid
   if (!validWord(secret, 2, 12) || !validWord(guess, 1, 12) || !Array.isArray(avoid) || avoid.length > 3 ||
       avoid.some(w => !validWord(w, 1, 8))) return json(422, {error: 'invalid input'}, origin)
 
-  const models = (env.GEMINI_MODELS ? String(env.GEMINI_MODELS).split(',') : DEFAULT_GEMINI_MODELS)
-    .map(s => s.trim()).filter(s => /^[a-z0-9][a-z0-9.\-]*$/.test(s))
-  if (!models.length) return json(500, {error: 'no valid model configured'}, origin)
-
-  const payload = JSON.stringify({
-    contents: [{role: 'user', parts: [{text: buildPrompt(secret, guess, avoid)}]}],
-    generationConfig: {temperature: 0.6, maxOutputTokens: 256}
-  })
-
+  const prompt = buildPrompt(secret, guess, avoid)
   let last = 502
-  for (const model of models) {
-    let r
-    try {
-      r = await fetch(GEMINI_BASE + model + ':generateContent', {
-        method: 'POST', headers: {'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY}, body: payload
-      })
-    } catch { last = 502; continue }
-    if (r.status === 429) { last = 429; continue }                   // 这个模型被限速：换下一个
-    if (r.status === 404 || r.status >= 500) { last = 502; continue }  // 模型名失效或 Google 出错：换下一个
-    if (!r.ok) return json(502, {error: 'upstream rejected the request'}, origin)   // 400/401/403：多半是 Key 有问题，换模型也没用
-    let data = null
-    try { data = await r.json() } catch {}
-    const word = cleanWord(extractText(data))
-    if (word) return json(200, {word, model}, origin)
-    last = 502                                                        // 空回复（被安全过滤）或回了一整句：换下一个
+  const skip = new Set()
+  for (const st of steps) {
+    if (skip.has(st.prov)) continue
+    const res = await st.ask(st.model, prompt, env)
+    if (res.word) return json(200, {word: res.word, model: st.model}, origin)
+    last = res.status
+    if (res.stop) skip.add(st.prov)
   }
   return json(last, {error: last === 429 ? 'rate limited' : 'no usable answer'}, origin)
 }

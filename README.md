@@ -59,11 +59,11 @@ games/
 
 从 `words.js`（和秘密词同一个 4–8 字词库）随机抽一个秘密词。玩家猜一个词，AI 给出一个**意思介于"你猜的词"和"秘密词"之间的中间词**，页面只显示中间词（不显示百分比）；大家顺着中间词的线索继续猜，直到猜中。
 
-- **为什么用 Gemini**：Jina 只做向量，不能生成文字，所以这个游戏用 Gemini 免费 API 生成中间词；「秘密词」仍用 Jina。
-- **结构和秘密词一样**：房主就是主机，持有秘密词，所有人（含房主）猜的词发给房主，房主经 Worker 的 `/middle` 向 Gemini 要中间词，再把公共状态广播给大家。Key 只存在 Worker 的 Secret `GEMINI_API_KEY` 里。
+- **为什么用 LLM**：Jina 只做向量，不能生成文字，所以这个游戏用大模型生成中间词（Worker 先试智谱 GLM 免费模型，再试 Gemini）；「秘密词」仍用 Jina。
+- **结构和秘密词一样**：房主就是主机，持有秘密词，所有人（含房主）猜的词发给房主，房主经 Worker 的 `/middle` 向 Gemini 要中间词，再把公共状态广播给大家。Key 只存在 Worker 的 Secret（`ZHIPU_API_KEY`、`GEMINI_API_KEY`，至少设一个）里。
 - **保护免费额度**：主机两次请求间隔至少 `MIN_GAP_MS`（默认 2.5 秒）、每人同时只排一个、同一个词本局只问一次（缓存）、一局最多 100 次猜测；Worker 里放了两个模型轮换，被限速（429）时换下一个。
 - **中间词校验**：必须是 2–8 个汉字，不能等于猜的词或秘密词，不能是秘密词的一部分、也不能包含整个秘密词；不合格就带上 `avoid` 重试一次，仍不合格这次猜测不计数。
-- **Worker 配置**：到 Cloudflare 把 `cloudflare/proxy-worker.js` 粘贴进 Edit Code 并 Deploy，再添加 Secret `GEMINI_API_KEY`；可选变量 `GEMINI_MODELS`（逗号分隔，覆盖默认模型名）。免费额度以 aistudio.google.com/rate-limit 显示为准。
+- **Worker 配置**：到 Cloudflare 把 `cloudflare/proxy-worker.js` 粘贴进 Edit Code 并 Deploy，再添加 Secret `ZHIPU_API_KEY`（和/或 `GEMINI_API_KEY`）。智谱国际站（z.ai）申请的 Key 要加变量 `ZHIPU_BASE` = `https://api.z.ai/api/paas/v4`，中国站（bigmodel.cn）的不用设。可选变量 `ZHIPU_MODELS` / `GEMINI_MODELS`（逗号分隔，覆盖默认模型名）。免费额度以 aistudio.google.com/rate-limit 显示为准。
 - **注意**：Gemini 免费层的内容可能被 Google 用来改进产品；中间词的质量取决于提示词，想调整改 `proxy-worker.js` 里的 `buildPrompt`。
 
 ## 连不上时
