@@ -32,6 +32,7 @@ games/
   rps/ connect-four/ draw/ quoridor/   各个游戏
   take-last/          抢最后一个（双人）：index.html 页面、config.js 玩法参数（倒计时、可拿个数）、logic.js 规则函数
   middle-word/        多人默契游戏（和 AI 一起说词，AI 生成"中间词"，房主代请求）：index.html、config.js、logic.js
+  hero-guess/         猜英雄（1–10 人，问智谱推理、抢答计分，房主代请求）：index.html、config.js、heroes.js 英雄名单、logic.js
   secret-word/        多人同猜（Jina 向量相似度，房主出题并代算）：index.html 页面、words.js 词库、config.js 接口设置、logic.js 计分逻辑
 ```
 
@@ -66,6 +67,17 @@ games/
 - **Worker 配置**：把 `cloudflare/proxy-worker.js` 粘贴到 Cloudflare 的 Edit Code 并 Deploy，再添加 Secret `ZHIPU_API_KEY`（和/或 `GEMINI_API_KEY`）。智谱国际站（z.ai）申请的 Key 要加变量 `ZHIPU_BASE` = `https://api.z.ai/api/paas/v4`，中国站（bigmodel.cn）的不用设。可选变量 `ZHIPU_MODELS` / `GEMINI_MODELS`（逗号分隔，覆盖默认模型名）。
 - **调整**：目标分数、每轮时间在 `config.js`；AI 的提示词在 `cloudflare/proxy-worker.js` 的 `buildBlendPrompt`；AI 开头词在 `logic.js` 的 `STARTERS`。
 - **注意**：Gemini 免费层的内容可能被 Google 用来改进产品。
+
+## 🕵️ 猜英雄（1–10 人，抢答）
+
+房主的页面随机藏一个《王者荣耀》英雄。大家向 **AI（智谱）** 提问来推理——AI 什么问题都能答（技能、性别、背景、玩法，甚至闲聊），唯独**不会直接说出名字**；想好了就报英雄名，**谁先报对谁得 1 分**，先拿到 5 分的赢。一个人玩就是单人测试。
+
+- **主机**：房主的页面抽英雄、收提问和猜测、请求 AI、判对错、算分。隐藏的英雄只在主机页面的内存里，公布答案前不会通过联机发给任何人；所有人的问答和猜错的英雄对大家都是公开的。
+- **规则细节**：AI 一次回答一个问题（排队）；同一个人要等 AI 回答完才能再问；每个英雄最多问 40 次、限时 5 分钟，到点没人猜出来就公布答案、不得分；猜错要等 6 秒才能再猜，别人猜过的错英雄不能重复猜；猜英雄时有输入提示和全部名单可点。主机可以随时"公布答案"跳过，房主离开后下一位接任并开新的一局。
+- **AI**：经 Worker 的 `/hero`，只用智谱。提示词写死在 Worker 里（页面只能传英雄名、问题和最近 8 组问答），Worker 会检查回答里有没有说出名字或别名（含"李 白""李-白"这类拆字），说漏嘴就换更严厉的提示词重来一次，还漏就拦下来。模型按顺序试：`glm-5.2` → `glm-5.3` → `glm-5.1` → `glm-4.7` → `glm-4.6` → `glm-4.5-flash`，免费额度不覆盖或被限速的会自动换下一个；用环境变量 `ZHIPU_HERO_MODELS`（逗号分隔）可以改顺序，国际站 Key 同样要设 `ZHIPU_BASE`。
+- **Worker 配置**：和「中间词」共用同一个 Worker 和 `ZHIPU_API_KEY`；更新后要把新的 `cloudflare/proxy-worker.js` 重新粘贴到 Cloudflare 的 Edit Code 并 Deploy，否则 `/hero` 不存在，游戏里会提示"Worker 还是旧代码，需要重新部署"。
+- **调整**：目标分数、限时、提问次数、猜错等待时间都在 `config.js`；英雄名单（含别名）在 `heroes.js`，名单里只有名字。AI 对新英雄可能不熟、会答错，觉得哪个英雄答得不准就从名单里删掉。
+- **注意**：房主自己打开开发者工具能看到答案；AI 的回答不保证正确。
 
 ## 连不上时
 

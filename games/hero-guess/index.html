@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>猜英雄</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  input[type=text] { font-size:16px; min-height:44px; }
+  button.main { min-height:44px; padding:0 18px; border:0; border-radius:10px; background:var(--accent);
+    color:#fff; font:inherit; font-weight:600; cursor:pointer; touch-action:manipulation; white-space:nowrap; }
+  button.main:disabled { opacity:.55; cursor:not-allowed; }
+  button.ghost { min-height:44px; padding:8px 14px; border:1px solid var(--line); border-radius:10px;
+    background:transparent; color:var(--text); font:inherit; font-size:14px; cursor:pointer; touch-action:manipulation; }
+  button.ghost:disabled { opacity:.45; cursor:not-allowed; }
+
+  .role { font-size:13px; color:var(--muted); margin:0 0 10px; }
+  .role:empty { display:none; }
+  .center { text-align:center; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { padding:4px 10px; border:1px solid var(--line); border-radius:999px; font-size:13px; word-break:break-all; }
+  .chip.me { border-color:var(--accent); color:var(--accent); }
+  .chip b { font-variant-numeric:tabular-nums; }
+  button.pick { min-height:44px; min-width:44px; padding:0 14px; border:1px solid var(--line); border-radius:999px;
+    background:transparent; color:var(--text); font:inherit; font-size:15px; cursor:pointer; touch-action:manipulation; }
+  .topline { display:flex; justify-content:space-between; gap:8px; font-size:14px; color:var(--muted); margin-bottom:8px; }
+  .lab { display:block; font-weight:600; margin-bottom:8px; }
+  .msg { min-height:22px; font-size:14px; margin-top:8px; }
+  .msg.bad { color:var(--bad); } .msg.warn { color:var(--warn); } .msg.ok { color:var(--ok); }
+  .sugg { margin-top:8px; }
+  .sugg:empty { display:none; }
+  details { margin-top:10px; }
+  summary { min-height:44px; display:flex; align-items:center; color:var(--muted); font-size:14px; cursor:pointer; }
+  details .chips { margin-top:4px; }
+
+  .result { text-align:center; }
+  .result .big { font-size:20px; font-weight:700; margin-bottom:6px; word-break:break-all; }
+  .result .big.ok { color:var(--ok); }
+  .result .answer { font-size:28px; font-weight:800; letter-spacing:2px; margin:6px 0; word-break:break-all; color:var(--accent); }
+  .result button { margin-top:12px; width:100%; }
+
+  .entry { padding:10px 0; border-bottom:1px solid var(--line); }
+  .entry:last-child { border-bottom:0; }
+  .entry.new { background:rgba(47,111,237,.08); margin:0 -8px; padding:10px 8px; border-radius:8px; border-bottom-color:transparent; }
+  .entry .who { font-size:12px; color:var(--muted); margin-bottom:2px; }
+  .entry .q { font-size:16px; word-break:break-all; }
+  .entry .a { margin-top:6px; padding:8px 10px; border-radius:10px; background:rgba(128,128,128,.12); font-size:15px;
+    white-space:pre-wrap; word-break:break-all; }
+  .entry .a.think { color:var(--muted); }
+  .entry .a.err { color:var(--warn); }
+  .entry.guess { font-size:15px; }
+  .entry.guess .x { color:var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>🕵️ 猜英雄</h1>
+
+  <div id="lobby"></div>
+  <div class="role" id="roleLine"></div>
+
+  <div class="card center" id="stateCard" hidden>
+    <div id="stateText"></div>
+  </div>
+
+  <!-- 比分 -->
+  <div class="card" id="scoreCard" hidden>
+    <div class="topline"><span id="roundLine"></span><span id="timeLine"></span></div>
+    <div class="chips" id="players"></div>
+  </div>
+
+  <!-- 公布答案 / 结束 -->
+  <div class="card result" id="resultCard" hidden>
+    <div class="big" id="resultTitle"></div>
+    <div class="answer" id="resultAns"></div>
+    <div class="muted" id="resultSub"></div>
+    <div class="muted" id="nextInfo" style="margin-top:6px"></div>
+    <button class="main" type="button" id="nextBtn"></button>
+    <div class="muted" id="waitNext" style="margin-top:12px" hidden>等待主机开始下一个…</div>
+  </div>
+
+  <!-- 问 AI -->
+  <form class="card" id="askForm" hidden novalidate>
+    <label class="lab" for="ask">🙋 问 AI（它知道答案，但不会直接说出名字）</label>
+    <div class="row">
+      <input type="text" id="ask" lang="zh-CN" maxlength="60" autocomplete="off" autocapitalize="off"
+             spellcheck="false" enterkeyhint="send" placeholder="例如：他是男的吗？会飞吗？">
+      <button class="main" type="submit" id="askBtn">提问</button>
+    </div>
+    <div class="msg" id="askMsg" aria-live="polite"></div>
+  </form>
+
+  <!-- 猜英雄 -->
+  <form class="card" id="guessForm" hidden novalidate>
+    <label class="lab" for="guess">🎯 猜英雄（先猜对的人得 1 分）</label>
+    <div class="row">
+      <input type="text" id="guess" lang="zh-CN" maxlength="12" autocomplete="off" autocapitalize="off"
+             spellcheck="false" enterkeyhint="send" placeholder="输入英雄名，例如：李白">
+      <button class="main" type="submit" id="guessBtn">猜！</button>
+    </div>
+    <div class="chips sugg" id="sugg"></div>
+    <div class="msg" id="guessMsg" aria-live="polite"></div>
+    <details>
+      <summary id="allSummary">查看全部英雄名单</summary>
+      <div class="chips" id="allHeroes"></div>
+    </details>
+  </form>
+
+  <div class="card" id="hostCard" hidden>
+    <button class="ghost" type="button" id="skipBtn">公布答案（跳过这个英雄，不得分）</button>
+  </div>
+
+  <!-- 记录 -->
+  <div class="card" id="logCard" hidden>
+    <div class="muted" style="margin-bottom:4px">大家问的和猜的（最新在最上面，所有人都看得到）</div>
+    <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <div class="muted">
+      <b>规则</b>：房主的页面随机抽一个《王者荣耀》英雄藏起来。你们可以向 🤖 AI 提问来推理——它什么都能答，唯独不会直接说出名字；
+      想好了就直接报英雄名，<b>谁先报对谁得 1 分</b>，先拿到目标分数的赢。所有人的问答和猜错的英雄大家都能看到。
+      猜错后要等几秒才能再猜；每个英雄有时间限制，到点没人猜出来就公布答案。只有你一个人时就是单人测试。
+      AI 偶尔会答错（尤其是新英雄），仅供推理参考。
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import {CONFIG} from './config.js'
+import {createLobby} from '../../shared/lobby.js'
+import {HERO_LIST, MAX_LOG, MAX_ANS_LEN, findHero, suggest, pickHero, cleanQuestion, questionError,
+        isId, pickLeader, newSid, parseQuestionMsg, parseGuessMsg, parseRes, parseState, isNewer} from './logic.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 独立打开时，返回时保留 ?s= 参数
+
+// =====================================================================================
+// 玩法与联机方式
+//   · 房主就是"主机"：抽英雄、收提问和猜测、请求 AI（经 Cloudflare Worker）、判对错、算分。
+//   · 隐藏的英雄只在主机页面的内存里；其他人只有在这一题公布答案之后才会收到它的名字。
+//   · 公共状态每次都发完整的一份并带版本号：晚加入的人、丢了消息的人，收到下一条就追上了。
+// =====================================================================================
+
+const blank = () => ({sid: '', v: 0, r: 0, rd: 0, ph: 'prep', tg: CONFIG.TARGET_SCORE, qn: 0, tl: 0, ans: '', by: -1, note: '',
+                      ids: [], sc: [], L: []})
+const P = blank()
+const resetPublic = () => Object.assign(P, blank())
+const stateMsg = () => ({t: 'st', sid: P.sid, v: P.v, r: P.r, rd: P.rd, ph: P.ph, tg: P.tg, qn: P.qn, tl: leftSecs(), ans: P.ans,
+                         by: P.by, note: P.note, ids: P.ids, sc: P.sc, L: P.L})
+
+// 只有主机用的私有状态
+const H = {gen: 0, hero: null, used: new Set(), seq: 0, deadline: 0, timer: 0,
+           queue: [], busy: false, pend: new Set(), lastQ: new Map(), lock: new Map()}
+
+// 每个人自己的界面状态
+const U = {seq: 0, recvAt: 0, lastRd: -1, lastR: -1, lockUntil: 0,
+           qBusy: false, qId: -1, qTimer: 0, qMsg: '', qCls: '',
+           gBusy: false, gId: -1, gTimer: 0, gMsg: '', gCls: ''}
+
+let room = null, act = null, selfId = null, leader = null, booted = false
+const peers = new Set()
+const isHost = () => !!selfId && leader === selfId
+const nameOf = id => (room && room.names && room.names[id]) || (id === selfId ? '我' : '玩家' + String(id).slice(-4))
+const present = () => [selfId, ...peers]
+
+function leftSecs() {
+  if (isHost()) return H.deadline ? Math.max(0, Math.ceil((H.deadline - Date.now()) / 1000)) : 0
+  return Math.max(0, Math.ceil(P.tl - (Date.now() - U.recvAt) / 1000))
+}
+
+function sendTo(target, msg) {
+  if (!act) return
+  try { const p = act.send(msg, target ? {target} : undefined); if (p && p.catch) p.catch(() => {}) } catch {}
+}
+function broadcast() { if (peers.size) sendTo(null, stateMsg()) }
+function bump() { P.v++; broadcast(); render() }
+
+// ---------- 向 Worker 问 AI（只有主机会调用） ----------
+async function askHero(job) {
+  const pairs = []
+  for (const e of P.L) if (e[1] === 'q' && e[5] === 1 && e[4] && e[0] < job.seq) pairs.push([e[3], e[4]])
+  const history = pairs.slice(-CONFIG.HISTORY_PAIRS)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), CONFIG.REQUEST_TIMEOUT_MS)
+  try {
+    const res = await fetch(CONFIG.HERO_URL, {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, signal: ctrl.signal,
+      body: JSON.stringify({hero: job.hero.n, aliases: job.hero.a, question: job.q, history})
+    })
+    if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e }
+    const json = await res.json()
+    const text = json && typeof json.answer === 'string' ? json.answer.trim() : ''
+    if (!text) throw Object.assign(new Error('empty'), {status: 502})
+    return text.slice(0, MAX_ANS_LEN)
+  } finally { clearTimeout(timer) }
+}
+
+function explain(e) {
+  if (e && e.name === 'AbortError') return '超时'
+  const s = e && e.status
+  if (s === 429) return '额度用完或限速'
+  if (s === 500) return 'Worker 没配置智谱 Key'
+  if (s === 422 || s === 404 || s === 405) return 'Worker 还是旧代码，需要重新部署'
+  if (s === 403) return '来源不被允许'
+  if (s === 502) return 'AI 没给出回答'
+  if (e instanceof TypeError) return '网络不通'
+  return String(e && e.message || e).slice(0, 20)
+}
+
+// =====================================================================================
+// 主机：开局、收提问、判猜测
+// =====================================================================================
+function ensurePlayer(id) {
+  let i = P.ids.indexOf(id)
+  if (i < 0) { P.ids.push(id); P.sc.push(0); i = P.ids.length - 1 }
+  return i
+}
+
+function pushLog(entry) {
+  P.L.push(entry)
+  while (P.L.length > MAX_LOG) P.L.shift()
+}
+
+function clearTimers() { clearTimeout(H.timer); H.timer = 0 }
+
+// 新的一局（分数清零）
+function newGame() {
+  if (!isHost()) return
+  clearTimers(); H.gen++
+  const keep = {sid: P.sid, v: P.v, r: P.r + 1}
+  resetPublic(); Object.assign(P, keep)
+  H.used.clear()
+  present().forEach(ensurePlayer)
+  startRound()
+}
+
+// 新的一个英雄
+function startRound() {
+  if (!isHost()) return
+  clearTimers(); H.gen++
+  H.queue = []; H.busy = false; H.pend.clear(); H.lock.clear(); H.lastQ.clear(); H.seq = 0
+  H.hero = pickHero(H.used)
+  H.used.add(H.hero.n)
+  P.rd++; P.ph = 'play'; P.L = []; P.qn = 0; P.ans = ''; P.by = -1; P.note = ''
+  H.deadline = Date.now() + CONFIG.ROUND_SECONDS * 1000
+  H.timer = setTimeout(() => endRound(-1, '时间到了，没有人猜出来'), CONFIG.ROUND_SECONDS * 1000)
+  bump()
+}
+
+// 这一题结束：winner 是猜对的人（序号），-1 表示没人猜对
+function endRound(winner, why) {
+  if (!isHost() || P.ph !== 'play') return
+  clearTimers(); H.gen++
+  H.queue = []; H.busy = false; H.pend.clear()
+  for (const e of P.L) if (e[5] === 0) { e[4] = '（这一题已经结束）'; e[5] = 2 }
+  P.ans = H.hero.n; P.by = winner; P.note = winner >= 0 ? '' : (why || '')
+  if (winner >= 0) P.sc[winner]++
+  if (winner >= 0 && P.sc[winner] >= P.tg) {
+    P.ph = 'over'; H.deadline = 0
+  } else {
+    P.ph = 'reveal'
+    H.deadline = Date.now() + CONFIG.NEXT_DELAY_SECONDS * 1000
+    H.timer = setTimeout(() => { if (isHost() && P.ph === 'reveal') startRound() }, CONFIG.NEXT_DELAY_SECONDS * 1000)
+  }
+  bump()
+}
+
+function deliverRes(to, res) {
+  if (to === selfId) onRes(parseRes(res))
+  else sendTo(to, res)
+}
+
+function submitQuestion(from, id, q) {
+  const reject = m => deliverRes(from, {t: 'res', id, k: 'q', ok: false, m, lk: 0})
+  if (P.ph !== 'play') return reject('现在不能提问')
+  if (H.pend.has(from)) return reject('AI 还在回答你的上一个问题，稍等一下')
+  const now = Date.now()
+  if (now - (H.lastQ.get(from) || 0) < CONFIG.QUESTION_GAP_MS) return reject('问得太快啦，稍等一下')
+  if (P.qn >= CONFIG.MAX_QUESTIONS) return reject('这个英雄的提问次数用完了，只能直接猜了')
+  const idx = ensurePlayer(from)
+  H.lastQ.set(from, now)
+  H.pend.add(from)
+  P.qn++
+  const seq = ++H.seq
+  pushLog([seq, 'q', idx, q, '', 0])
+  H.queue.push({seq, from, q, hero: H.hero, gen: H.gen})
+  deliverRes(from, {t: 'res', id, k: 'q', ok: true, m: '', lk: 0})
+  bump()
+  pump()
+}
+
+// AI 一次只处理一个问题（免费模型同时只允许一个请求），排队按顺序来
+async function pump() {
+  if (H.busy || !H.queue.length || P.ph !== 'play' || !isHost()) return
+  const job = H.queue.shift()
+  if (job.gen !== H.gen) return pump()
+  H.busy = true
+  let ans = '', st = 1
+  try { ans = await askHero(job) }
+  catch (e) { st = 2; ans = `⚠️ AI 没有回答（${explain(e)}），可以再问一次` }
+  if (job.gen !== H.gen) return
+  H.busy = false
+  H.pend.delete(job.from)
+  const e = P.L.find(x => x[0] === job.seq)
+  if (e) { e[4] = ans; e[5] = st }
+  if (st === 2) P.qn = Math.max(0, P.qn - 1)
+  bump()
+  pump()
+}
+
+function submitGuess(from, id, text) {
+  const reject = (m, lk = 0) => deliverRes(from, {t: 'res', id, k: 'g', ok: false, m, lk})
+  if (P.ph !== 'play') return reject('现在不能猜')
+  const now = Date.now()
+  const lockUntil = H.lock.get(from) || 0
+  if (lockUntil > now) { const s = Math.ceil((lockUntil - now) / 1000); return reject(`猜错后要等一等，还有 ${s} 秒`, s) }
+  const h = findHero(text)
+  if (!h) return reject('没找到这个英雄，点下面的提示选一个，或检查有没有错别字')
+  if (P.L.some(e => e[1] === 'g' && e[3] === h.n)) return reject(`「${h.n}」已经有人猜过了，不是它`)
+  const idx = ensurePlayer(from)
+  if (h.n === H.hero.n) {
+    deliverRes(from, {t: 'res', id, k: 'g', ok: true, m: '🎉 猜对了！', lk: 0})
+    endRound(idx)
+    return
+  }
+  pushLog([++H.seq, 'g', idx, h.n, '', 1])
+  H.lock.set(from, now + CONFIG.WRONG_LOCK_SECONDS * 1000)
+  deliverRes(from, {t: 'res', id, k: 'g', ok: true, m: `不是「${h.n}」`, lk: CONFIG.WRONG_LOCK_SECONDS})
+  bump()
+}
+
+// =====================================================================================
+// 收到的联机消息（一律当作不可信数据）
+// =====================================================================================
+function onMsg(d, from) {
+  if (!d || typeof d !== 'object' || !isId(from) || from === selfId || !selfId) return
+  if (isHost()) {
+    if (!peers.has(from)) return
+    if (d.t === 'q') { const m = parseQuestionMsg(d); if (m) submitQuestion(from, m.id, m.q) }
+    else if (d.t === 'g') { const m = parseGuessMsg(d); if (m) submitGuess(from, m.id, m.g) }
+    else if (d.t === 'hi') { if (P.sid) sendTo(from, stateMsg()) }
+  } else if (from === leader) {
+    if (d.t === 'st') {
+      const s = parseState(d)
+      if (s && isNewer(P, s)) { Object.assign(P, s); U.recvAt = Date.now(); render() }
+    } else if (d.t === 'res') onRes(parseRes(d))
+  }
+}
+
+function onRes(res) {
+  if (!res) return
+  if (res.k === 'q') {
+    if (res.id !== U.qId) return
+    clearTimeout(U.qTimer); U.qBusy = false; U.qId = -1
+    if (res.ok) { U.qMsg = ''; U.qCls = ''; $('ask').value = '' }
+    else { U.qMsg = res.m; U.qCls = 'warn' }
+  } else {
+    if (res.id !== U.gId) return
+    clearTimeout(U.gTimer); U.gBusy = false; U.gId = -1
+    if (res.lk) U.lockUntil = Date.now() + res.lk * 1000
+    if (res.ok) { $('guess').value = ''; renderSugg() }
+    U.gMsg = res.m; U.gCls = res.ok ? (res.m.startsWith('🎉') ? 'ok' : 'warn') : 'warn'
+  }
+  render()
+}
+
+// =====================================================================================
+// 谁是主机：房主。房主换人（或有人进出）时重新确认
+// =====================================================================================
+function resetLocal() {
+  clearTimeout(U.qTimer); clearTimeout(U.gTimer)
+  U.qBusy = U.gBusy = false; U.qId = U.gId = -1; U.lockUntil = 0
+  U.qMsg = U.qCls = U.gMsg = U.gCls = ''
+}
+
+function syncLeader() {
+  if (!selfId) return
+  const nl = pickLeader(room && room.host, selfId, peers)
+  if (nl === leader) return
+  leader = nl
+  clearTimers(); H.gen++; H.queue = []; H.busy = false; H.pend.clear(); H.deadline = 0
+  resetLocal()
+  resetPublic()
+  if (leader === selfId) { P.sid = newSid(); newGame() }       // 我成了主机：新开一局（新的 sid 让别人知道换了主机）
+  else if (leader) sendTo(leader, {t: 'hi'})                   // 我不是主机：向主机要当前状态
+  render()
+}
+
+function onJoin(id) {
+  if (!isId(id) || id === selfId || peers.has(id)) return
+  peers.add(id)
+  if (!selfId) return
+  const was = leader
+  syncLeader()
+  if (isHost() && was === leader && P.sid) { ensurePlayer(id); bump() }   // 有人中途加入：把当前进度发给他
+  else render()
+}
+function onLeave(id) {
+  if (!peers.delete(id)) return
+  if (!selfId) return
+  const was = leader
+  syncLeader()
+  if (isHost() && was === leader) { H.lock.delete(id); H.lastQ.delete(id); bump() } else render()
+}
+
+function boot() {
+  if (booted) return
+  booted = true
+  syncLeader()
+  render()
+  setInterval(() => {
+    if (isHost()) { if (peers.size && P.sid) sendTo(null, stateMsg()) }
+    else if (leader && !P.sid) sendTo(leader, {t: 'hi'})
+  }, 5000)
+}
+function soloBoot() { if (!selfId) { selfId = 'solo-' + Math.random().toString(36).slice(2, 8); boot() } }
+
+// =====================================================================================
+// 操作
+// =====================================================================================
+const meIdx = () => P.ids.indexOf(selfId)
+const myPending = () => { const i = meIdx(); return i >= 0 && P.L.some(e => e[1] === 'q' && e[2] === i && e[5] === 0) }
+
+function sendAsk() {
+  if (P.ph !== 'play' || U.qBusy || !leader || myPending()) return
+  const q = cleanQuestion($('ask').value)
+  const bad = questionError(q)
+  if (bad) { U.qMsg = bad; U.qCls = 'bad'; return render() }
+  const id = ++U.seq
+  U.qBusy = true; U.qId = id; U.qMsg = ''; U.qCls = ''
+  if (isHost()) submitQuestion(selfId, id, q)
+  else {
+    sendTo(leader, {t: 'q', id, q})
+    U.qTimer = setTimeout(() => {                   // 主机一直不回：放开输入，让玩家可以重试
+      if (U.qId !== id) return
+      U.qBusy = false; U.qId = -1; U.qMsg = '主机没有响应，请稍后再试'; U.qCls = 'warn'; render()
+    }, 15000)
+  }
+  render()
+}
+
+function sendGuess() {
+  if (P.ph !== 'play' || U.gBusy || !leader || U.lockUntil > Date.now()) return
+  const g = cleanQuestion($('guess').value)
+  if (!g) { U.gMsg = '先输入你猜的英雄名'; U.gCls = 'bad'; return render() }
+  const id = ++U.seq
+  U.gBusy = true; U.gId = id; U.gMsg = ''; U.gCls = ''
+  if (isHost()) submitGuess(selfId, id, g)
+  else {
+    sendTo(leader, {t: 'g', id, g})
+    U.gTimer = setTimeout(() => {
+      if (U.gId !== id) return
+      U.gBusy = false; U.gId = -1; U.gMsg = '主机没有响应，请稍后再试'; U.gCls = 'warn'; render()
+    }, 15000)
+  }
+  render()
+}
+
+$('askForm').onsubmit = e => { e.preventDefault(); sendAsk() }
+$('guessForm').onsubmit = e => { e.preventDefault(); sendGuess() }
+$('guess').oninput = renderSugg
+$('skipBtn').onclick = () => { if (isHost()) endRound(-1, '主机公布了答案') }
+$('nextBtn').onclick = () => {
+  if (!isHost()) return
+  if (P.ph === 'reveal') startRound()
+  else if (P.ph === 'over') newGame()
+}
+
+// =====================================================================================
+// 画面
+// =====================================================================================
+const whoName = idx => P.ids[idx] === selfId ? '你' : nameOf(P.ids[idx])
+const fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+
+function pickHeroName(name) {
+  $('guess').value = name
+  renderSugg()
+}
+
+function renderSugg() {
+  const box = $('sugg')
+  box.textContent = ''
+  for (const n of suggest($('guess').value, 8)) {
+    const b = document.createElement('button')
+    b.type = 'button'; b.className = 'pick'; b.textContent = n
+    b.onclick = () => pickHeroName(n)
+    box.appendChild(b)
+  }
+}
+
+function render() {
+  const host = isHost()
+  const ph = P.ph
+  const inGame = ph !== 'prep'
+
+  // 换了一局或换了一个英雄：清掉上一题的提示和等待
+  if (P.r !== U.lastR || P.rd !== U.lastRd) {
+    U.lastR = P.r; U.lastRd = P.rd
+    resetLocal()
+    $('ask').value = ''; $('guess').value = ''; renderSugg()
+  }
+
+  let role = '正在连接…'
+  if (selfId && leader) {
+    if (host) role = peers.size ? '👑 你是主机：隐藏的英雄在你的页面里，AI 也由你的页面代为请求' : '👑 你是主机：目前只有你一个人，这是单人测试；其他人加入后会一起玩'
+    else role = `主机是「${nameOf(leader)}」，英雄和 AI 都由主机负责`
+  }
+  $('roleLine').textContent = role
+
+  $('stateCard').hidden = inGame
+  if (!inGame) $('stateText').textContent = host ? '正在准备…' : !P.sid ? (leader ? '正在等待主机…' : '正在连接…') : '主机正在准备…'
+
+  // 比分
+  $('scoreCard').hidden = !inGame
+  $('roundLine').textContent = P.rd ? `第 ${P.rd} 个英雄 · 先猜对 ${P.tg} 个的赢` : ''
+  renderPlayers(inGame)
+
+  // 公布答案 / 结束
+  const showResult = ph === 'reveal' || ph === 'over'
+  $('resultCard').hidden = !showResult
+  if (showResult) {
+    const winner = P.by >= 0 ? whoName(P.by) : ''
+    const t = $('resultTitle')
+    if (ph === 'over') { t.textContent = `🏆 ${winner} 先猜对了 ${P.tg} 个英雄，赢了！`; t.className = 'big ok' }
+    else if (P.by >= 0) { t.textContent = `🎉 ${winner} 猜对了！`; t.className = 'big ok' }
+    else { t.textContent = `⌛ ${P.note || '没有人猜出来'}`; t.className = 'big' }
+    $('resultAns').textContent = P.ans
+    $('resultSub').textContent = P.by >= 0 ? `${winner} +1 分` : '这个英雄不得分'
+    $('nextBtn').hidden = !host
+    $('nextBtn').textContent = ph === 'over' ? '再来一局' : '现在开始下一个'
+    $('waitNext').hidden = host
+    $('waitNext').textContent = ph === 'over' ? '等待主机开始下一局…' : '稍后自动开始下一个英雄…'
+  }
+
+  // 提问 / 猜
+  const playing = ph === 'play'
+  const pending = myPending()
+  $('askForm').hidden = !playing
+  $('guessForm').hidden = !playing
+  $('hostCard').hidden = !(host && playing)
+  $('ask').disabled = U.qBusy
+  $('askBtn').disabled = U.qBusy || pending || P.qn >= CONFIG.MAX_QUESTIONS
+  $('guess').disabled = U.gBusy
+  const askNote = pending ? 'AI 正在回答你的上一个问题…' : (P.qn >= CONFIG.MAX_QUESTIONS ? '这个英雄的提问次数用完了，只能直接猜了' : '')
+  $('askMsg').textContent = U.qMsg || askNote
+  $('askMsg').className = 'msg ' + (U.qMsg ? U.qCls : askNote ? 'warn' : '')
+  $('guessMsg').textContent = U.gMsg
+  $('guessMsg').className = 'msg ' + U.gCls
+  $('allSummary').textContent = `查看全部 ${HERO_LIST.length} 位英雄名单`
+
+  // 记录
+  $('logCard').hidden = !P.L.length
+  renderLog()
+  updateDynamic()
+}
+
+function updateDynamic() {
+  const left = leftSecs()
+  if (P.ph === 'play') $('timeLine').textContent = `⏱ ${fmt(left)} · 已问 ${P.qn}/${CONFIG.MAX_QUESTIONS}`
+  else $('timeLine').textContent = ''
+  $('nextInfo').textContent = P.ph === 'reveal' ? `${left} 秒后自动开始下一个英雄` : ''
+  const lockLeft = Math.ceil((U.lockUntil - Date.now()) / 1000)
+  $('guessBtn').disabled = U.gBusy || lockLeft > 0 || P.ph !== 'play'
+  $('guessBtn').textContent = lockLeft > 0 ? `等 ${lockLeft} 秒` : '猜！'
+}
+setInterval(updateDynamic, 1000)
+
+function renderPlayers(show) {
+  const box = $('players')
+  box.textContent = ''
+  if (!show) return
+  const here = new Set(present())
+  const add = (label, score, me) => {
+    const chip = document.createElement('span')
+    chip.className = 'chip' + (me ? ' me' : '')
+    chip.append(label + ' ')
+    const b = document.createElement('b'); b.textContent = score
+    chip.appendChild(b)
+    box.appendChild(chip)
+  }
+  const order = P.ids.map((id, i) => i).filter(i => here.has(P.ids[i]))
+  order.sort((a, b) => P.sc[b] - P.sc[a])
+  for (const i of order) {
+    const id = P.ids[i]
+    add(`${id === leader ? '👑 ' : ''}${id === selfId ? '你' : nameOf(id)}`, P.sc[i], id === selfId)
+  }
+}
+
+function renderLog() {
+  const box = $('log')
+  box.textContent = ''
+  const rows = [...P.L].reverse()
+  rows.forEach((e, k) => {
+    const [, kind, who, text, ans, st] = e
+    const div = document.createElement('div')
+    div.className = 'entry' + (kind === 'g' ? ' guess' : '') + (k === 0 ? ' new' : '')
+    if (kind === 'g') {
+      div.append(`🎯 ${whoName(who)} 猜了「${text}」 `)
+      const x = document.createElement('span'); x.className = 'x'; x.textContent = '❌ 不是'
+      div.appendChild(x)
+    } else {
+      const w = document.createElement('div'); w.className = 'who'; w.textContent = `🙋 ${whoName(who)} 问`
+      const q = document.createElement('div'); q.className = 'q'; q.textContent = text
+      const a = document.createElement('div')
+      a.className = 'a' + (st === 0 ? ' think' : st === 2 ? ' err' : '')
+      a.textContent = st === 0 ? '🤖 AI 思考中…' : '🤖 ' + ans
+      div.append(w, q, a)
+    }
+    box.appendChild(div)
+  })
+}
+
+// 全部英雄名单（点一下填进输入框）
+for (const h of HERO_LIST) {
+  const b = document.createElement('button')
+  b.type = 'button'; b.className = 'pick'; b.textContent = h.n
+  b.onclick = () => pickHeroName(h.n)
+  $('allHeroes').appendChild(b)
+}
+
+// =====================================================================================
+// 启动：通过大厅联机。独立打开时自己建房（扫码）；联机库加载不了就当作单人玩
+// =====================================================================================
+render()
+const lobby = await createLobby({
+  gameId: 'hero-guess',
+  container: $('lobby'),
+  maxPlayers: 10,
+  onPeerJoin: onJoin,
+  onPeerLeave: onLeave,
+  setup(r) {
+    room = r
+    act = r.makeAction('hg')
+    act.onMessage((d, meta) => onMsg(d, meta && meta.peerId))
+    Promise.resolve(r.getSelf()).then(s => { selfId = s.peerId; boot() }).catch(soloBoot)
+  }
+})
+if (!lobby && !selfId) soloBoot()
+</script>
+</body>
+</html>
