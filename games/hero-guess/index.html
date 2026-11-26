@@ -6,125 +6,195 @@
 <title>猜英雄</title>
 <link rel="stylesheet" href="../../shared/style.css">
 <style>
-  input[type=text] { font-size:16px; min-height:44px; }
-  button.main { min-height:44px; padding:0 18px; border:0; border-radius:10px; background:var(--accent);
-    color:#fff; font:inherit; font-weight:600; cursor:pointer; touch-action:manipulation; white-space:nowrap; }
-  button.main:disabled { opacity:.55; cursor:not-allowed; }
-  button.ghost { min-height:44px; padding:8px 14px; border:1px solid var(--line); border-radius:10px;
-    background:transparent; color:var(--text); font:inherit; font-size:14px; cursor:pointer; touch-action:manipulation; }
-  button.ghost:disabled { opacity:.45; cursor:not-allowed; }
+  /* 配色：靛蓝夜（案卷）、朱砂（印章/猜测）、金（分数）。页面底色沿用大厅，保证内嵌时没有色差。 */
+  :root {
+    --ink:#1d2347; --seal:#c8372d; --gold:#e3b54a;
+    --ask:#3441b5; --ask-t:#fff;
+    --soft:rgba(128,128,128,.13);
+    --serif:"Noto Serif SC","Source Han Serif SC","Songti SC","STSong","SimSun",serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#1a1f40; --seal:#e5564b; --ask:#8e9cff; --ask-t:#12152b; }
+  }
+  button { font:inherit; touch-action:manipulation; }
+  :focus-visible { outline:2px solid var(--ask); outline-offset:2px; }
+  #guessForm :focus-visible { outline-color:var(--seal); }
 
-  .role { font-size:13px; color:var(--muted); margin:0 0 10px; }
+  .role { font-size:13px; color:var(--muted); margin:0 2px 10px; }
   .role:empty { display:none; }
-  .center { text-align:center; }
-  .chips { display:flex; flex-wrap:wrap; gap:6px; }
-  .chip { padding:4px 10px; border:1px solid var(--line); border-radius:999px; font-size:13px; word-break:break-all; }
-  .chip.me { border-color:var(--accent); color:var(--accent); }
-  .chip b { font-variant-numeric:tabular-nums; }
-  button.pick { min-height:44px; min-width:44px; padding:0 14px; border:1px solid var(--line); border-radius:999px;
-    background:transparent; color:var(--text); font:inherit; font-size:15px; cursor:pointer; touch-action:manipulation; }
-  .topline { display:flex; justify-content:space-between; gap:8px; font-size:14px; color:var(--muted); margin-bottom:8px; }
-  .lab { display:block; font-weight:600; margin-bottom:8px; }
-  .msg { min-height:22px; font-size:14px; margin-top:8px; }
+  .wait { text-align:center; color:var(--muted); padding:28px 16px; }
+
+  /* ---------- 案卷：回合、倒计时、神秘英雄、比分 ---------- */
+  .case { background:var(--ink); color:#e9ecf8; border-radius:18px; padding:16px; margin-bottom:14px; }
+  .case-top { display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:14px; }
+  .case-top #roundLine { font-weight:600; }
+  .case-top #timeLine { color:#a9b1d6; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .tbar { height:4px; border-radius:2px; background:rgba(255,255,255,.14); margin:10px 0 14px; overflow:hidden; }
+  .tbar i { display:block; height:100%; width:calc(var(--p,1) * 100%); background:var(--gold); transition:width 1s linear; }
+  .tbar.low i { background:#ff7a6e; }
+
+  .mystery { display:flex; align-items:center; gap:14px; padding-bottom:4px; }
+  .mystery .box { flex:none; width:68px; height:68px; display:grid; place-items:center; border:2px dashed rgba(255,255,255,.35);
+    border-radius:10px; font:700 40px/1 var(--serif); color:var(--gold); }
+  .mystery b { display:block; font:700 22px/1.25 var(--serif); }
+  .mystery span { font-size:13px; color:#a9b1d6; }
+
+  .reveal { text-align:center; padding:8px 0 4px; }
+  .reveal .big { font-size:16px; font-weight:600; word-break:break-all; }
+  .reveal .big.ok { color:var(--gold); }
+  .seal { display:inline-block; margin:14px 0 10px; padding:10px 22px 10px calc(22px + .14em); background:var(--seal); color:#fff3e6;
+    font:800 34px/1.15 var(--serif); letter-spacing:.14em; border-radius:6px; word-break:break-all;
+    box-shadow:inset 0 0 0 2px rgba(255,243,230,.55); transform:rotate(-3deg); }
+  .seal.stamp { animation:stamp .42s cubic-bezier(.2,.9,.3,1.2) both; }
+  @keyframes stamp {
+    0% { transform:scale(1.8) rotate(-9deg); opacity:0; }
+    60% { opacity:1; }
+    100% { transform:scale(1) rotate(-3deg); opacity:1; }
+  }
+  .reveal .sub { font-size:14px; color:#a9b1d6; }
+  .go { width:100%; min-height:46px; margin-top:14px; border:0; border-radius:12px; background:var(--gold); color:#1d2347; font-weight:700; cursor:pointer; }
+  .wait-next { margin-top:12px; font-size:14px; color:#a9b1d6; }
+
+  .players { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.12); }
+  .players:empty { display:none; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:3px 4px 3px 11px; border-radius:999px; font-size:13px;
+    background:rgba(255,255,255,.08); word-break:break-all; }
+  .chip.me { box-shadow:inset 0 0 0 1px var(--gold); }
+  .chip b { min-width:22px; padding:1px 6px; border-radius:999px; background:rgba(0,0,0,.28); color:var(--gold); text-align:center; font-variant-numeric:tabular-nums; }
+  .skip { margin:6px 0 -6px; min-height:44px; padding:0; border:0; background:none; color:#a9b1d6; font-size:13px; text-decoration:underline; cursor:pointer; }
+
+  /* ---------- 输入区：问 AI / 猜英雄 ---------- */
+  .composer { background:var(--card); border-radius:18px; padding:6px 14px 14px; margin-bottom:18px; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .tabs { display:flex; gap:4px; margin:8px 0 12px; padding:4px; border-radius:12px; background:var(--soft); }
+  .tabs button { flex:1; min-height:40px; border:0; border-radius:9px; background:transparent; color:var(--muted); font-weight:600; cursor:pointer; }
+  .tabs button[aria-selected=true] { background:var(--card); box-shadow:0 1px 3px rgba(0,0,0,.14); }
+  #tabAsk[aria-selected=true] { color:var(--ask); }
+  #tabGuess[aria-selected=true] { color:var(--seal); }
+  .composer input[type=text] { font-size:16px; min-height:46px; border-radius:12px; }
+  .composer .row { align-items:stretch; }
+  .send { flex:none; min-height:46px; padding:0 20px; border:0; border-radius:12px; font-weight:700; cursor:pointer; white-space:nowrap; }
+  .send:disabled { opacity:.5; cursor:not-allowed; }
+  .send.ask { background:var(--ask); color:var(--ask-t); }
+  .send.guess { background:var(--seal); color:#fff; }
+  .msg { min-height:20px; margin-top:8px; font-size:14px; }
+  .msg:empty { min-height:0; margin:0; }
   .msg.bad { color:var(--bad); } .msg.warn { color:var(--warn); } .msg.ok { color:var(--ok); }
-  .sugg { margin-top:8px; }
-  .sugg:empty { display:none; }
-  details { margin-top:10px; }
-  summary { min-height:44px; display:flex; align-items:center; color:var(--muted); font-size:14px; cursor:pointer; }
-  details .chips { margin-top:4px; }
 
-  .result { text-align:center; }
-  .result .big { font-size:20px; font-weight:700; margin-bottom:6px; word-break:break-all; }
-  .result .big.ok { color:var(--ok); }
-  .result .answer { font-size:28px; font-weight:800; letter-spacing:2px; margin:6px 0; word-break:break-all; color:var(--accent); }
-  .result button { margin-top:12px; width:100%; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chips:empty { display:none; }
+  .composer .chips { margin-top:10px; }
+  button.pick { min-height:40px; padding:0 14px; border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--text); font-size:14px; cursor:pointer; }
+  details.all summary { min-height:44px; display:flex; align-items:center; color:var(--muted); font-size:14px; cursor:pointer; }
+  details.all .chips { padding-bottom:2px; }
 
-  .entry { padding:10px 0; border-bottom:1px solid var(--line); }
-  .entry:last-child { border-bottom:0; }
-  .entry.new { background:rgba(47,111,237,.08); margin:0 -8px; padding:10px 8px; border-radius:8px; border-bottom-color:transparent; }
-  .entry .who { font-size:12px; color:var(--muted); margin-bottom:2px; }
-  .entry .q { font-size:16px; word-break:break-all; }
-  .entry .a { margin-top:6px; padding:8px 10px; border-radius:10px; background:rgba(128,128,128,.12); font-size:15px;
-    white-space:pre-wrap; word-break:break-all; }
-  .entry .a.think { color:var(--muted); }
-  .entry .a.err { color:var(--warn); }
-  .entry.guess { font-size:15px; }
-  .entry.guess .x { color:var(--bad); }
+  /* ---------- 记录：聊天气泡，最新的在最上面（紧挨着输入框） ---------- */
+  .feed { display:flex; flex-direction:column; gap:18px; margin-bottom:18px; }
+  .entry { display:flex; flex-direction:column; gap:6px; }
+  .qwrap { display:flex; flex-direction:column; align-items:flex-start; max-width:88%; }
+  .qwrap.mine { align-self:flex-end; align-items:flex-end; }
+  .who { margin:0 6px 2px; font-size:12px; color:var(--muted); }
+  .q { padding:9px 14px; border-radius:16px 16px 16px 4px; border:1px solid var(--line); background:var(--card); word-break:break-word; }
+  .qwrap.mine .q { border:0; background:var(--ask); color:var(--ask-t); border-radius:16px 16px 4px 16px; }
+  .arow { display:flex; align-items:flex-start; gap:8px; }
+  .av { flex:none; width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:var(--ink); color:var(--gold); font:700 14px/1 var(--serif); }
+  .a { max-width:calc(100% - 36px); padding:9px 14px; border-radius:4px 16px 16px 16px; background:var(--soft); white-space:pre-wrap; word-break:break-word; }
+  .a.err { color:var(--warn); }
+  .dots i { display:inline-block; width:6px; height:6px; margin-right:4px; border-radius:50%; background:var(--muted); animation:blink 1.2s infinite both; }
+  .dots i:nth-child(2) { animation-delay:.2s; } .dots i:nth-child(3) { animation-delay:.4s; margin-right:0; }
+  @keyframes blink { 0%,80%,100% { opacity:.25; } 40% { opacity:1; } }
+  .entry.guess { align-items:center; }
+  .gpill { display:inline-flex; align-items:center; gap:8px; padding:6px 14px; border:1px solid var(--line); border-radius:999px; font-size:14px; word-break:break-all; }
+  .gpill .x { color:var(--seal); font-weight:700; white-space:nowrap; }
+
+  .rules { margin:0 2px 28px; color:var(--muted); font-size:14px; }
+  .rules summary { min-height:44px; display:flex; align-items:center; cursor:pointer; }
+  .rules p { margin:0 0 8px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .seal.stamp { animation:none; }
+    .dots i { animation:none; opacity:.6; }
+    .tbar i { transition:none; }
+  }
 </style>
 </head>
 <body>
 <main>
   <a class="back" id="back" href="../../">← 返回游戏厅</a>
-  <h1>🕵️ 猜英雄</h1>
+  <h1>猜英雄</h1>
 
   <div id="lobby"></div>
   <div class="role" id="roleLine"></div>
 
-  <div class="card center" id="stateCard" hidden>
+  <div class="card wait" id="stateCard" hidden>
     <div id="stateText"></div>
   </div>
 
-  <!-- 比分 -->
-  <div class="card" id="scoreCard" hidden>
-    <div class="topline"><span id="roundLine"></span><span id="timeLine"></span></div>
-    <div class="chips" id="players"></div>
-  </div>
+  <!-- 案卷：回合 / 倒计时 / 神秘英雄 or 揭晓 / 比分 -->
+  <section class="case" id="caseCard" hidden>
+    <div class="case-top"><span id="roundLine"></span><span id="timeLine"></span></div>
+    <div class="tbar" id="tbar" hidden><i></i></div>
 
-  <!-- 公布答案 / 结束 -->
-  <div class="card result" id="resultCard" hidden>
-    <div class="big" id="resultTitle"></div>
-    <div class="answer" id="resultAns"></div>
-    <div class="muted" id="resultSub"></div>
-    <div class="muted" id="nextInfo" style="margin-top:6px"></div>
-    <button class="main" type="button" id="nextBtn"></button>
-    <div class="muted" id="waitNext" style="margin-top:12px" hidden>等待主机开始下一个…</div>
-  </div>
-
-  <!-- 问 AI -->
-  <form class="card" id="askForm" hidden novalidate>
-    <label class="lab" for="ask">🙋 问 AI（它知道答案，但不会直接说出名字）</label>
-    <div class="row">
-      <input type="text" id="ask" lang="zh-CN" maxlength="60" autocomplete="off" autocapitalize="off"
-             spellcheck="false" enterkeyhint="send" placeholder="例如：他是男的吗？会飞吗？">
-      <button class="main" type="submit" id="askBtn">提问</button>
+    <div class="mystery" id="mystery">
+      <div class="box" aria-hidden="true">？</div>
+      <div><b>神秘英雄</b><span>AI 知道答案，但不会说出名字</span></div>
     </div>
-    <div class="msg" id="askMsg" aria-live="polite"></div>
-  </form>
 
-  <!-- 猜英雄 -->
-  <form class="card" id="guessForm" hidden novalidate>
-    <label class="lab" for="guess">🎯 猜英雄（先猜对的人得 1 分）</label>
-    <div class="row">
-      <input type="text" id="guess" lang="zh-CN" maxlength="12" autocomplete="off" autocapitalize="off"
-             spellcheck="false" enterkeyhint="send" placeholder="输入英雄名，例如：李白">
-      <button class="main" type="submit" id="guessBtn">猜！</button>
+    <div class="reveal" id="resultCard" hidden>
+      <div class="big" id="resultTitle"></div>
+      <div class="seal" id="resultAns"></div>
+      <div class="sub" id="resultSub"></div>
+      <div class="wait-next" id="nextInfo"></div>
+      <button class="go" type="button" id="nextBtn"></button>
+      <div class="wait-next" id="waitNext" hidden>等待主机开始下一个…</div>
     </div>
-    <div class="chips sugg" id="sugg"></div>
-    <div class="msg" id="guessMsg" aria-live="polite"></div>
-    <details>
-      <summary id="allSummary">查看全部英雄名单</summary>
-      <div class="chips" id="allHeroes"></div>
-    </details>
-  </form>
 
-  <div class="card" id="hostCard" hidden>
-    <button class="ghost" type="button" id="skipBtn">公布答案（跳过这个英雄，不得分）</button>
-  </div>
+    <div class="players" id="players"></div>
+    <button class="skip" type="button" id="skipBtn" hidden>公布答案，跳过这个英雄</button>
+  </section>
+
+  <!-- 输入区 -->
+  <section class="composer" id="composer" hidden>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabAsk" aria-selected="true">问 AI</button>
+      <button type="button" role="tab" id="tabGuess" aria-selected="false">猜英雄</button>
+    </div>
+
+    <form id="askForm" novalidate>
+      <div class="row">
+        <input type="text" id="ask" lang="zh-CN" maxlength="60" autocomplete="off" autocapitalize="off"
+               spellcheck="false" enterkeyhint="send" placeholder="问点什么，例如：他会飞吗？" aria-label="向 AI 提问">
+        <button class="send ask" type="submit" id="askBtn">提问</button>
+      </div>
+      <div class="chips" id="quick"></div>
+      <div class="msg" id="askMsg" aria-live="polite"></div>
+    </form>
+
+    <form id="guessForm" novalidate hidden>
+      <div class="row">
+        <input type="text" id="guess" lang="zh-CN" maxlength="12" autocomplete="off" autocapitalize="off"
+               spellcheck="false" enterkeyhint="send" placeholder="输入英雄名，先猜对的人得 1 分" aria-label="猜英雄名">
+        <button class="send guess" type="submit" id="guessBtn">猜！</button>
+      </div>
+      <div class="chips" id="sugg"></div>
+      <div class="msg" id="guessMsg" aria-live="polite"></div>
+      <details class="all">
+        <summary id="allSummary">查看全部英雄名单</summary>
+        <div class="chips" id="allHeroes"></div>
+      </details>
+    </form>
+  </section>
 
   <!-- 记录 -->
-  <div class="card" id="logCard" hidden>
-    <div class="muted" style="margin-bottom:4px">大家问的和猜的（最新在最上面，所有人都看得到）</div>
-    <div id="log"></div>
+  <div class="feed" id="logCard" hidden>
+    <div id="log" class="feed" style="margin:0"></div>
   </div>
 
-  <div class="card">
-    <div class="muted">
-      <b>规则</b>：房主的页面随机抽一个《王者荣耀》英雄藏起来。你们可以向 🤖 AI 提问来推理——它什么都能答，唯独不会直接说出名字；
-      想好了就直接报英雄名，<b>谁先报对谁得 1 分</b>，先拿到目标分数的赢。所有人的问答和猜错的英雄大家都能看到。
-      猜错后要等几秒才能再猜；每个英雄有时间限制，到点没人猜出来就公布答案。只有你一个人时就是单人测试。
-      AI 偶尔会答错（尤其是新英雄），仅供推理参考。
-    </div>
-  </div>
+  <details class="rules">
+    <summary>玩法说明</summary>
+    <p>房主的页面随机藏一个《王者荣耀》英雄。向 AI 提问来推理，它什么都能答，唯独不会直接说出名字。</p>
+    <p>想好了就报英雄名，先报对的人得 1 分，先到目标分数的赢。所有人的问答和猜错的英雄大家都看得到。</p>
+    <p>猜错后要等几秒才能再猜；每个英雄有时间和提问次数限制，到点没人猜出来就公布答案。只有你一个人时就是单人测试。AI 偶尔会答错，尤其是新英雄。</p>
+  </details>
 </main>
 
 <script type="module">
@@ -134,6 +204,7 @@ import {HERO_LIST, MAX_LOG, MAX_ANS_LEN, findHero, suggest, pickHero, cleanQuest
         isId, pickLeader, newSid, parseQuestionMsg, parseGuessMsg, parseRes, parseState, isNewer} from './logic.js'
 
 const $ = id => document.getElementById(id)
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n }
 $('back').href = '../../' + location.search   // 独立打开时，返回时保留 ?s= 参数
 
 // =====================================================================================
@@ -155,7 +226,7 @@ const H = {gen: 0, hero: null, used: new Set(), seq: 0, deadline: 0, timer: 0,
            queue: [], busy: false, pend: new Set(), lastQ: new Map(), lock: new Map()}
 
 // 每个人自己的界面状态
-const U = {seq: 0, recvAt: 0, lastRd: -1, lastR: -1, lockUntil: 0,
+const U = {seq: 0, recvAt: 0, lastRd: -1, lastR: -1, lockUntil: 0, mode: 'ask', stampKey: '',
            qBusy: false, qId: -1, qTimer: 0, qMsg: '', qCls: '',
            gBusy: false, gId: -1, gTimer: 0, gMsg: '', gCls: ''}
 
@@ -458,8 +529,15 @@ function sendGuess() {
   render()
 }
 
+function setMode(m, focus) {
+  if (U.mode !== m) { U.mode = m; render() }
+  if (focus) { try { $(m === 'ask' ? 'ask' : 'guess').focus() } catch {} }
+}
+
 $('askForm').onsubmit = e => { e.preventDefault(); sendAsk() }
 $('guessForm').onsubmit = e => { e.preventDefault(); sendGuess() }
+$('tabAsk').onclick = () => setMode('ask', true)
+$('tabGuess').onclick = () => setMode('guess', true)
 $('guess').oninput = renderSugg
 $('skipBtn').onclick = () => { if (isHost()) endRound(-1, '主机公布了答案') }
 $('nextBtn').onclick = () => {
@@ -483,11 +561,20 @@ function renderSugg() {
   const box = $('sugg')
   box.textContent = ''
   for (const n of suggest($('guess').value, 8)) {
-    const b = document.createElement('button')
-    b.type = 'button'; b.className = 'pick'; b.textContent = n
+    const b = el('button', 'pick', n)
+    b.type = 'button'
     b.onclick = () => pickHeroName(n)
     box.appendChild(b)
   }
+}
+
+// 常用问题：点一下填进输入框（手机上打字慢）
+const QUICK = ['是男性吗？', '是什么定位？', '有位移技能吗？', '有历史原型吗？']
+for (const q of QUICK) {
+  const b = el('button', 'pick', q)
+  b.type = 'button'
+  b.onclick = () => { $('ask').value = q; try { $('ask').focus() } catch {} }
+  $('quick').appendChild(b)
 }
 
 function render() {
@@ -499,12 +586,13 @@ function render() {
   if (P.r !== U.lastR || P.rd !== U.lastRd) {
     U.lastR = P.r; U.lastRd = P.rd
     resetLocal()
+    U.mode = 'ask'
     $('ask').value = ''; $('guess').value = ''; renderSugg()
   }
 
   let role = '正在连接…'
   if (selfId && leader) {
-    if (host) role = peers.size ? '👑 你是主机：隐藏的英雄在你的页面里，AI 也由你的页面代为请求' : '👑 你是主机：目前只有你一个人，这是单人测试；其他人加入后会一起玩'
+    if (host) role = peers.size ? '你是主机：英雄和 AI 都由你的页面负责' : '你是主机，目前只有你一个人（单人测试），其他人加入后会一起玩'
     else role = `主机是「${nameOf(leader)}」，英雄和 AI 都由主机负责`
   }
   $('roleLine').textContent = role
@@ -512,12 +600,16 @@ function render() {
   $('stateCard').hidden = inGame
   if (!inGame) $('stateText').textContent = host ? '正在准备…' : !P.sid ? (leader ? '正在等待主机…' : '正在连接…') : '主机正在准备…'
 
-  // 比分
-  $('scoreCard').hidden = !inGame
-  $('roundLine').textContent = P.rd ? `第 ${P.rd} 个英雄 · 先猜对 ${P.tg} 个的赢` : ''
+  // 案卷
+  const playing = ph === 'play'
+  $('caseCard').hidden = !inGame
+  $('roundLine').textContent = P.rd ? `第 ${P.rd} 个英雄 · 先到 ${P.tg} 分赢` : ''
+  $('tbar').hidden = !playing
+  $('mystery').hidden = !playing
+  $('skipBtn').hidden = !(host && playing)
   renderPlayers(inGame)
 
-  // 公布答案 / 结束
+  // 揭晓 / 结束
   const showResult = ph === 'reveal' || ph === 'over'
   $('resultCard').hidden = !showResult
   if (showResult) {
@@ -532,14 +624,23 @@ function render() {
     $('nextBtn').textContent = ph === 'over' ? '再来一局' : '现在开始下一个'
     $('waitNext').hidden = host
     $('waitNext').textContent = ph === 'over' ? '等待主机开始下一局…' : '稍后自动开始下一个英雄…'
-  }
+    // 揭晓的那一下：答案像印章一样盖下来（每个揭晓只播一次）
+    const key = `${P.r}:${P.rd}:${ph}`
+    if (key !== U.stampKey) {
+      U.stampKey = key
+      const s = $('resultAns')
+      s.classList.remove('stamp'); void s.offsetWidth; s.classList.add('stamp')
+    }
+  } else U.stampKey = ''
 
-  // 提问 / 猜
-  const playing = ph === 'play'
+  // 输入区
   const pending = myPending()
-  $('askForm').hidden = !playing
-  $('guessForm').hidden = !playing
-  $('hostCard').hidden = !(host && playing)
+  $('composer').hidden = !playing
+  $('tabAsk').setAttribute('aria-selected', String(U.mode === 'ask'))
+  $('tabGuess').setAttribute('aria-selected', String(U.mode === 'guess'))
+  $('askForm').hidden = U.mode !== 'ask'
+  $('guessForm').hidden = U.mode !== 'guess'
+  $('quick').hidden = P.L.length > 0
   $('ask').disabled = U.qBusy
   $('askBtn').disabled = U.qBusy || pending || P.qn >= CONFIG.MAX_QUESTIONS
   $('guess').disabled = U.gBusy
@@ -548,7 +649,7 @@ function render() {
   $('askMsg').className = 'msg ' + (U.qMsg ? U.qCls : askNote ? 'warn' : '')
   $('guessMsg').textContent = U.gMsg
   $('guessMsg').className = 'msg ' + U.gCls
-  $('allSummary').textContent = `查看全部 ${HERO_LIST.length} 位英雄名单`
+  $('allSummary').textContent = `查看全部 ${HERO_LIST.length} 位英雄`
 
   // 记录
   $('logCard').hidden = !P.L.length
@@ -558,8 +659,11 @@ function render() {
 
 function updateDynamic() {
   const left = leftSecs()
-  if (P.ph === 'play') $('timeLine').textContent = `⏱ ${fmt(left)} · 已问 ${P.qn}/${CONFIG.MAX_QUESTIONS}`
+  if (P.ph === 'play') $('timeLine').textContent = `${fmt(left)} · 已问 ${P.qn}/${CONFIG.MAX_QUESTIONS}`
   else $('timeLine').textContent = ''
+  const pct = P.ph === 'play' ? Math.max(0, Math.min(1, left / CONFIG.ROUND_SECONDS)) : 0
+  $('tbar').style.setProperty('--p', pct)
+  $('tbar').classList.toggle('low', pct < 0.2)
   $('nextInfo').textContent = P.ph === 'reveal' ? `${left} 秒后自动开始下一个英雄` : ''
   const lockLeft = Math.ceil((U.lockUntil - Date.now()) / 1000)
   $('guessBtn').disabled = U.gBusy || lockLeft > 0 || P.ph !== 'play'
@@ -572,50 +676,49 @@ function renderPlayers(show) {
   box.textContent = ''
   if (!show) return
   const here = new Set(present())
-  const add = (label, score, me) => {
-    const chip = document.createElement('span')
-    chip.className = 'chip' + (me ? ' me' : '')
-    chip.append(label + ' ')
-    const b = document.createElement('b'); b.textContent = score
-    chip.appendChild(b)
-    box.appendChild(chip)
-  }
   const order = P.ids.map((id, i) => i).filter(i => here.has(P.ids[i]))
   order.sort((a, b) => P.sc[b] - P.sc[a])
   for (const i of order) {
     const id = P.ids[i]
-    add(`${id === leader ? '👑 ' : ''}${id === selfId ? '你' : nameOf(id)}`, P.sc[i], id === selfId)
+    const chip = el('span', 'chip' + (id === selfId ? ' me' : ''))
+    chip.append(`${id === leader ? '👑 ' : ''}${id === selfId ? '你' : nameOf(id)} `)
+    chip.appendChild(el('b', null, P.sc[i]))
+    box.appendChild(chip)
   }
 }
 
 function renderLog() {
   const box = $('log')
   box.textContent = ''
-  const rows = [...P.L].reverse()
-  rows.forEach((e, k) => {
+  for (const e of [...P.L].reverse()) {
     const [, kind, who, text, ans, st] = e
-    const div = document.createElement('div')
-    div.className = 'entry' + (kind === 'g' ? ' guess' : '') + (k === 0 ? ' new' : '')
+    const div = el('div', 'entry' + (kind === 'g' ? ' guess' : ''))
     if (kind === 'g') {
-      div.append(`🎯 ${whoName(who)} 猜了「${text}」 `)
-      const x = document.createElement('span'); x.className = 'x'; x.textContent = '❌ 不是'
-      div.appendChild(x)
+      const pill = el('span', 'gpill', `${whoName(who)} 猜了「${text}」`)
+      pill.appendChild(el('span', 'x', '✕ 不是'))
+      div.appendChild(pill)
     } else {
-      const w = document.createElement('div'); w.className = 'who'; w.textContent = `🙋 ${whoName(who)} 问`
-      const q = document.createElement('div'); q.className = 'q'; q.textContent = text
-      const a = document.createElement('div')
-      a.className = 'a' + (st === 0 ? ' think' : st === 2 ? ' err' : '')
-      a.textContent = st === 0 ? '🤖 AI 思考中…' : '🤖 ' + ans
-      div.append(w, q, a)
+      const qw = el('div', 'qwrap' + (P.ids[who] === selfId ? ' mine' : ''))
+      qw.append(el('div', 'who', `${whoName(who)} 问`), el('div', 'q', text))
+      const row = el('div', 'arow')
+      const av = el('span', 'av', '智'); av.setAttribute('aria-hidden', 'true')
+      const a = el('div', 'a' + (st === 0 ? ' think' : st === 2 ? ' err' : ''))
+      if (st === 0) {
+        a.setAttribute('aria-label', 'AI 思考中')
+        const dots = el('span', 'dots'); dots.append(el('i'), el('i'), el('i'))
+        a.appendChild(dots)
+      } else a.textContent = ans
+      row.append(av, a)
+      div.append(qw, row)
     }
     box.appendChild(div)
-  })
+  }
 }
 
 // 全部英雄名单（点一下填进输入框）
 for (const h of HERO_LIST) {
-  const b = document.createElement('button')
-  b.type = 'button'; b.className = 'pick'; b.textContent = h.n
+  const b = el('button', 'pick', h.n)
+  b.type = 'button'
   b.onclick = () => pickHeroName(h.n)
   $('allHeroes').appendChild(b)
 }
