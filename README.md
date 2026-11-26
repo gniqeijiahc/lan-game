@@ -33,6 +33,7 @@ games/
   take-last/          抢最后一个（双人）：index.html 页面、config.js 玩法参数（倒计时、可拿个数）、logic.js 规则函数
   middle-word/        多人默契游戏（和 AI 一起说词，AI 生成"中间词"，房主代请求）：index.html、config.js、logic.js
   hero-guess/         猜英雄（1–10 人，问智谱推理、抢答计分，房主代请求）：index.html、config.js、heroes.js 英雄名单、logic.js
+  cut-circle/         切圆（双人）：index.html 页面、config.js 玩法参数（球的大小与速度、刀速、最小切割、限时）、logic.js 几何与规则
   secret-word/        多人同猜（Jina 向量相似度，房主出题并代算）：index.html 页面、words.js 词库、config.js 接口设置、logic.js 计分逻辑
 ```
 

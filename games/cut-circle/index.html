@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>切圆</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  #game { padding:12px; }
+  .score { display:flex; justify-content:space-around; text-align:center; }
+  .score b { display:block; font-size:28px; line-height:1.2; }
+  .score span { font-size:13px; color:var(--muted); }
+  .bar { display:flex; justify-content:space-between; font-size:14px; color:var(--muted); margin-top:6px;
+    font-variant-numeric:tabular-nums; }
+  #clock.low { color:var(--bad); font-weight:700; }
+  #who { text-align:center; font-size:17px; font-weight:700; min-height:26px; }
+  #who.win { color:var(--ok); } #who.lose { color:var(--bad); }
+  #board { display:block; width:100%; aspect-ratio:1; margin:6px 0; touch-action:none;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  #hint { text-align:center; color:var(--muted); font-size:14px; min-height:42px; }
+  #again { display:block; width:100%; min-height:56px; padding:12px; border:0; border-radius:14px;
+    background:var(--accent); color:#fff; font:inherit; font-size:18px; font-weight:700;
+    cursor:pointer; touch-action:manipulation; }
+  #again:disabled { opacity:.4; cursor:default; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>✂️ 切圆</h1>
+
+  <div id="lobby"></div>
+
+  <div class="card" id="game">
+    <div class="score">
+      <div><b id="sMe">0</b><span>我</span></div>
+      <div><b id="sThem">0</b><span>对方</span></div>
+    </div>
+    <div class="bar"><span id="round">第 1 局</span><span id="left"></span><span id="clock"></span></div>
+    <div id="who"></div>
+    <canvas id="board" width="640" height="640" aria-label="圆形场地，在上面划一条线来切"></canvas>
+    <div id="hint" aria-live="polite"></div>
+    <button id="again" type="button" hidden>再来一局</button>
+  </div>
+  <div class="muted" id="rules"></div>
+</main>
+
+<script type="module">
+import {createLobby} from '../../shared/lobby.js'
+import {CONFIG} from './config.js'
+import {DT, makeCircle, area, edgesOf, stepBall, chordOf, tipAt, roundBall, simulateCut, applyCut, startBall, validBall} from './logic.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+const HEX64 = /^[0-9a-f]{64}$/
+const START = makeCircle()
+const START_AREA = area(START)
+const MIN_PCT = Math.round(CONFIG.MIN_CUT * 100)
+
+async function sha(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ---------- 状态（两边各自运行同一套规则，没有"主机"） ----------
+let room = null
+let opp = null                 // 对手 peerId
+let selfId = null
+let epoch = 0                  // 每次重置 +1，用来丢弃过期的异步结果
+let g = 1                      // 局数
+let phase = 'idle'             // idle 无对手 | seeding 决定先手 | playing 轮到某人划线 | cutting 刀在走 | over
+let poly = START, edges = edgesOf(START), r = CONFIG.BALL_RADIUS, ball = null
+let cuts = 0                   // 已经完成的刀数
+let meFirst = false
+let cut = null                 // 正在进行的一刀 {chord, start, plan, t0, mine}
+let fade = null                // 刚切掉的那块 {poly, t0}
+let hitLine = null             // 切到球时停住的刀痕 [from, tip]
+let winner = null, reason = '' // 'me' | 'opp'；'hit' | 'time'
+let drag = null                // {id, a, b}
+let endAt = 0
+let score = {me: 0, them: 0}
+let mine = null                // {g, seed, nonce, revealed}
+let warn = ''
+const theirCommit = {}         // g -> hash
+const theirSeed = {}           // g -> seed
+const pending = new Map()      // n -> 对方提前到达的操作
+
+let commitAct = null, revealAct = null, cutAct = null, outAct = null
+const send = (act, d) => act && act.send(d).catch(() => {})
+
+const myTurn = () => (cuts % 2 === 0) === meFirst
+
+function newRoundState() {
+  poly = START; edges = edgesOf(START); r = CONFIG.BALL_RADIUS; ball = null
+  cuts = 0; cut = null; fade = null; hitLine = null; winner = null; reason = ''; drag = null
+  mine = null; warn = ''
+  pending.clear()
+}
+
+function resetGame() {
+  epoch++
+  g = 1
+  score = {me: 0, them: 0}
+  for (const k in theirCommit) delete theirCommit[k]
+  for (const k in theirSeed) delete theirSeed[k]
+  newRoundState()
+  phase = opp ? 'seeding' : 'idle'
+  render()
+  if (opp) beginSeed()
+}
+
+// ---------- 开局：双方各出种子，先交哈希再揭晓，合并后决定先手和小球 ----------
+async function beginSeed() {
+  const ep = epoch
+  if (!selfId) {
+    try { selfId = (await room.getSelf()).peerId } catch {}
+    if (ep !== epoch) return
+    if (!selfId) { warn = '⚠️ 无法获取自己的编号'; render(); return }
+  }
+  const seed = crypto.getRandomValues(new Uint32Array(1))[0]
+  const nonce = crypto.randomUUID()
+  const gg = g
+  const hash = await sha(`${gg}|${seed}|${nonce}`)
+  if (ep !== epoch || phase !== 'seeding' || gg !== g) return
+  mine = {g: gg, seed, nonce, revealed: false}
+  send(commitAct, {g: gg, hash})
+  render()
+  tryReveal()
+}
+
+function tryReveal() {
+  if (phase !== 'seeding' || !mine || mine.revealed || !(mine.g in theirCommit)) return
+  mine.revealed = true
+  send(revealAct, {g: mine.g, seed: mine.seed, nonce: mine.nonce})
+  tryStart()
+}
+
+function tryStart() {
+  if (phase !== 'seeding' || !mine || !mine.revealed || !(g in theirSeed)) return
+  const seed = (mine.seed ^ theirSeed[g]) >>> 0
+  const lowId = selfId < opp ? selfId : opp
+  const highId = selfId < opp ? opp : selfId
+  meFirst = selfId === ((seed & 1) === 0 ? lowId : highId)
+  ball = startBall(seed, CONFIG.BALL_SPEED)
+  startTurn()
+}
+
+function startTurn() {
+  phase = 'playing'
+  drag = null
+  endAt = Date.now() + CONFIG.TURN_SECONDS * 1000
+  render()
+  drain()
+}
+
+function finish(who, why) {
+  phase = 'over'
+  winner = who; reason = why
+  drag = null
+  if (who === 'me') score.me++; else score.them++
+  render()
+}
+
+// ---------- 出刀 ----------
+function beginCut(a, b, startState, isMine) {
+  const chord = chordOf(poly, a, b)
+  if (!chord || chord.small < CONFIG.MIN_CUT) return false
+  const plan = simulateCut(poly, startState, r, chord, CONFIG.BLADE_SPEED)
+  ball = {...startState}
+  cut = {a, b, chord, plan, t: 0, t0: performance.now(), mine: isMine}
+  phase = 'cutting'
+  drag = null
+  warn = ''
+  render()
+  return true
+}
+
+function endCut() {
+  const {chord, plan, mine: isMine} = cut
+  cut = null
+  ball = {...plan.ball}
+  if (plan.hit) {
+    hitLine = [chord.from, tipAt(chord, plan.duration, CONFIG.BLADE_SPEED)]
+    finish(isMine ? 'opp' : 'me', 'hit')
+    return
+  }
+  const next = applyCut(poly, chord, ball, START_AREA, CONFIG)
+  poly = next.poly; edges = edgesOf(poly); r = next.r; ball = next.ball
+  fade = {poly: next.removed, t0: performance.now()}
+  cuts++
+  startTurn()
+}
+
+function myCut(a, b) {
+  if (phase !== 'playing' || !myTurn()) return
+  const start = roundBall(ball)
+  const msg = {g, n: cuts + 1, a, b, ...start}
+  if (beginCut(a, b, start, true)) send(cutAct, msg)
+}
+
+// 处理对方的操作：只接收"下一步"，提前到达的先存着
+function drain() {
+  if (phase !== 'playing' || myTurn()) return
+  const n = cuts + 1
+  const m = pending.get(n)
+  if (!m) return
+  pending.delete(n)
+  if (m.timeout) { finish('me', 'time'); return }
+  if (!validBall(m.ball, poly, r, CONFIG.BALL_SPEED) || !beginCut(m.a, m.b, m.ball, false)) {
+    warn = '⚠️ 收到非法操作，已忽略'; render()
+  }
+}
+
+function checkTimeout() {
+  if (phase !== 'playing') return
+  if (myTurn() && Date.now() >= endAt) {
+    send(outAct, {g, n: cuts + 1})
+    finish('opp', 'time')
+  } else renderClock()
+}
+setInterval(checkTimeout, 250)
+
+function again() {
+  if (phase !== 'over' || !opp) return
+  for (const k in theirCommit) if (+k <= g) delete theirCommit[k]
+  for (const k in theirSeed) delete theirSeed[k]
+  g++
+  newRoundState()
+  phase = 'seeding'
+  render()
+  beginSeed()
+}
+
+// ---------- 划线 ----------
+const cv = $('board'), ctx = cv.getContext('2d')
+const SCALE = 1.06            // 画布边缘到圆之间留一点空
+
+function toWorld(e) {
+  const box = cv.getBoundingClientRect()
+  const k = v => Math.round(Math.max(-1.5, Math.min(1.5, v)) * 1e4) / 1e4
+  return [k(((e.clientX - box.left) / box.width * 2 - 1) * SCALE), k(((e.clientY - box.top) / box.height * 2 - 1) * SCALE)]
+}
+const longEnough = d => Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) > 0.12
+
+cv.addEventListener('pointerdown', e => {
+  if (phase !== 'playing' || !myTurn() || drag) return
+  e.preventDefault()
+  try { cv.setPointerCapture(e.pointerId) } catch {}
+  const p = toWorld(e)
+  drag = {id: e.pointerId, a: p, b: p}
+  warn = ''
+  render()
+})
+cv.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return
+  drag.b = toWorld(e)
+  renderHint()
+})
+cv.addEventListener('pointerup', e => {
+  if (!drag || e.pointerId !== drag.id) return
+  drag.b = toWorld(e)
+  const d = drag
+  drag = null
+  if (longEnough(d)) {
+    const chord = chordOf(poly, d.a, d.b)
+    if (!chord) warn = '这条线没有切到场地'
+    else if (chord.small < CONFIG.MIN_CUT) warn = `切得太少了，较小的一块至少要 ${MIN_PCT}%`
+    else return myCut(d.a, d.b)
+  }
+  render()
+})
+cv.addEventListener('pointercancel', () => { drag = null; renderHint() })
+
+// ---------- 画面 ----------
+function path(pts) {
+  ctx.beginPath()
+  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))
+  ctx.closePath()
+}
+function line(a, b, color, width, dash = []) {
+  ctx.setLineDash(dash)
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke()
+  ctx.setLineDash([])
+}
+
+function draw(now) {
+  const size = Math.round(cv.clientWidth * Math.min(window.devicePixelRatio || 1, 2))
+  if (size && cv.width !== size) cv.width = cv.height = size
+  const css = getComputedStyle(document.documentElement)
+  const color = n => css.getPropertyValue(n).trim()
+  const px = SCALE * 2 / cv.width                 // 一个画布像素对应的世界长度
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.clearRect(0, 0, cv.width, cv.height)
+  ctx.setTransform(1 / px, 0, 0, 1 / px, cv.width / 2, cv.height / 2)
+
+  // 原来的大圆（虚线）
+  ctx.setLineDash([5 * px, 6 * px])
+  ctx.strokeStyle = color('--line'); ctx.lineWidth = 2 * px
+  path(START); ctx.stroke()
+  ctx.setLineDash([])
+
+  // 现在的场地
+  path(poly)
+  ctx.fillStyle = color('--bg'); ctx.fill()
+  ctx.strokeStyle = color('--accent'); ctx.lineWidth = 4 * px; ctx.lineJoin = 'round'; ctx.stroke()
+
+  // 刚切掉的一块淡出
+  if (fade) {
+    const k = 1 - (now - fade.t0) / 600
+    if (k <= 0 || fade.poly.length < 3) fade = null
+    else {
+      ctx.globalAlpha = k * .45
+      path(fade.poly); ctx.fillStyle = color('--warn'); ctx.fill()
+      ctx.globalAlpha = 1
+    }
+  }
+
+  if (drag && longEnough(drag)) {
+    const chord = chordOf(poly, drag.a, drag.b)
+    if (chord) {
+      const ok = chord.small >= CONFIG.MIN_CUT
+      line(chord.from, chord.to, color(ok ? '--warn' : '--muted'), 3 * px, [10 * px, 8 * px])
+    }
+    line(drag.a, drag.b, color('--muted'), 1.5 * px)
+  }
+  if (cut) {
+    line(cut.chord.from, cut.chord.to, color('--warn'), 1.5 * px, [6 * px, 8 * px])
+    line(cut.chord.from, tipAt(cut.chord, cut.t, CONFIG.BLADE_SPEED), color('--warn'), 6 * px)
+  }
+  if (hitLine) line(hitLine[0], hitLine[1], color('--bad'), 6 * px)
+
+  if (ball) {
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, r, 0, Math.PI * 2)
+    ctx.fillStyle = color(hitLine ? '--bad' : '--text'); ctx.fill()
+  }
+}
+
+// ---------- 动画循环：小球按固定步长前进 ----------
+let last = performance.now(), acc = 0
+function frame(now) {
+  const passed = Math.max(0, (now - last) / 1000)
+  last = now
+  if (phase === 'cutting') {
+    // 重放事先算好的这一刀，保证双方结果一致
+    const want = Math.min((now - cut.t0) / 1000, cut.plan.duration)
+    while (cut.t < cut.plan.duration && cut.t + DT <= want + 1e-9) { cut.t += DT; stepBall(ball, edges, r) }
+    acc = 0
+    if ((now - cut.t0) / 1000 >= cut.plan.duration) endCut()
+  } else if (phase === 'playing') {
+    acc += Math.min(passed, .1)
+    while (acc >= DT) { stepBall(ball, edges, r); acc -= DT }
+  }
+  draw(now)
+  requestAnimationFrame(frame)
+}
+
+// ---------- 文字 ----------
+function renderClock() {
+  const c = $('clock')
+  if (phase === 'playing') {
+    const s = Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
+    c.textContent = `⏱ ${s}`
+    c.classList.toggle('low', s <= 5)
+  } else { c.textContent = ''; c.classList.remove('low') }
+}
+
+function renderHint() {
+  let hint = ''
+  if (phase === 'idle') hint = '等对方加入…'
+  else if (phase === 'seeding') {
+    hint = g in theirCommit ? '正在决定先手…' : g === 1 ? '正在连接对手…' : '已请求再来一局，等对方确认…'
+  } else if (phase === 'playing') {
+    if (!myTurn()) hint = '等待对方出刀…'
+    else if (drag && longEnough(drag)) {
+      const chord = chordOf(poly, drag.a, drag.b)
+      if (!chord) hint = '这条线没有切到场地'
+      else {
+        const pct = Math.floor(chord.small * 100)
+        hint = chord.small >= CONFIG.MIN_CUT ? `松手出刀（较小的一块 ${pct}%）` : `较小的一块只有 ${pct}%，至少要 ${MIN_PCT}%`
+      }
+    } else hint = '在场地上划一条线，看准时机松手'
+  } else if (phase === 'cutting') hint = cut.mine ? '你出刀了…' : '对方出刀了…'
+  else hint = (g + 1) in theirCommit ? '对方想再来一局' : ''
+  $('hint').textContent = warn || hint
+}
+
+function render() {
+  $('sMe').textContent = score.me
+  $('sThem').textContent = score.them
+  $('round').textContent = `第 ${g} 局`
+  $('left').textContent = `剩余面积 ${Math.round(area(poly) / START_AREA * 100)}%`
+  let who = '', cls = ''
+  if (phase === 'playing' || phase === 'cutting') who = myTurn() ? '轮到你切' : '轮到对方切'
+  else if (phase === 'over') {
+    const won = winner === 'me'
+    cls = won ? 'win' : 'lose'
+    if (reason === 'hit') who = won ? '对方切到球了，你赢了 🎉' : '你切到球了，你输了'
+    else who = won ? '对方超时了，你赢了 🎉' : '超时了，你输了'
+  }
+  $('who').textContent = who
+  $('who').className = cls
+  $('again').hidden = phase !== 'over'
+  renderClock()
+  renderHint()
+}
+
+$('rules').textContent =
+  `规则：双方轮流在场地上划一条直线，松手后刀沿着这条线切过去，没有球的那一侧会被切掉。` +
+  `刀经过时碰到小球就输了。切掉的面积越多，小球越大。每刀较小的一块至少要占 ${MIN_PCT}%，` +
+  `每回合限时 ${CONFIG.TURN_SECONDS} 秒。划线后缩回起点附近再松手可以取消。`
+$('again').onclick = again
+newRoundState()
+render()
+requestAnimationFrame(frame)
+
+const num = v => Number.isFinite(v) && Math.abs(v) <= 2
+const point = p => Array.isArray(p) && p.length === 2 && p.every(num)
+// 对方的操作是否属于这一局、且不是过期或重复的
+const fresh = d => (phase === 'playing' || phase === 'cutting' || phase === 'seeding') &&
+  d.g === g && Number.isInteger(d.n) && d.n > cuts && d.n <= cuts + 2 && !pending.has(d.n)
+
+await createLobby({
+  gameId: 'cut-circle',
+  container: $('lobby'),
+  setup(rm) {
+    room = rm
+    commitAct = room.makeAction('commit')
+    revealAct = room.makeAction('reveal')
+    cutAct = room.makeAction('cut')
+    outAct = room.makeAction('out')
+
+    commitAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || typeof d.hash !== 'string' || !HEX64.test(d.hash)) return
+      if (!Number.isInteger(d.g)) return
+      // 对方可能比我先看到本局结束（我这边刀还在走），所以下一局的提交随时先收下
+      const ok = (phase === 'seeding' && d.g === g) || (phase !== 'idle' && d.g === g + 1)
+      if (!ok || d.g in theirCommit) return
+      theirCommit[d.g] = d.hash
+      renderHint()
+      tryReveal()
+    })
+
+    revealAct.onMessage(async (d, {peerId}) => {
+      if (peerId !== opp || !d || phase !== 'seeding') return
+      if (!Number.isInteger(d.g) || d.g !== g || d.g in theirSeed) return
+      if (!Number.isInteger(d.seed) || d.seed < 0 || d.seed > 0xFFFFFFFF) return
+      if (typeof d.nonce !== 'string' || d.nonce.length > 64) return
+      const c = theirCommit[d.g]
+      if (!c) return
+      const ep = epoch, gg = g
+      const h = await sha(`${d.g}|${d.seed}|${d.nonce}`)
+      if (ep !== epoch || phase !== 'seeding' || gg !== g || g in theirSeed) return
+      if (h !== c) { warn = '⚠️ 对方的先手种子校验失败'; render(); return }
+      theirSeed[g] = d.seed
+      tryStart()
+    })
+
+    cutAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || !fresh(d)) return
+      if (!point(d.a) || !point(d.b) || ![d.x, d.y, d.vx, d.vy].every(num)) return
+      pending.set(d.n, {a: d.a, b: d.b, ball: {x: d.x, y: d.y, vx: d.vx, vy: d.vy}})
+      drain()
+    })
+
+    outAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || !fresh(d)) return
+      pending.set(d.n, {timeout: true})
+      drain()
+    })
+  },
+  onOpponentJoin(id) { opp = id; resetGame() },
+  onOpponentLeave() { opp = null; resetGame() }
+})
+</script>
+</body>
+</html>
