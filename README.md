@@ -30,6 +30,7 @@ shared/
 games/
   registry.js         游戏清单（新增游戏在这里登记）
   rps/ connect-four/ draw/ quoridor/   各个游戏
+  reversi/            黑白棋（双人）：index.html 页面、logic.js 翻子规则
   take-last/          抢最后一个（双人）：index.html 页面、config.js 玩法参数（倒计时、可拿个数）、logic.js 规则函数
   middle-word/        多人默契游戏（和 AI 一起说词，AI 生成"中间词"，房主代请求）：index.html、config.js、logic.js
   hero-guess/         猜英雄（1–10 人，问智谱推理、抢答计分，房主代请求）：index.html、config.js、heroes.js 英雄名单、logic.js

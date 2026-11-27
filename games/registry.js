@@ -10,5 +10,6 @@ export const GAMES = [
   {id: 'middle-word', icon: '🌉', name: '中间词', desc: '大家和 AI 同时说一个词，说到一起就得分；没说到一起时，AI 会想一个"中间词"当作下一轮的词。一个人也能和 AI 对玩', players: '1–10 人 · 默契对战', min: 1, max: 10, path: 'games/middle-word/', colors: ['#3cc8d8', '#1f86b8']},
   {id: 'take-last', icon: '🍬', name: '抢最后一个', desc: '先在倒计时内往场上放物体，放得少的先手；轮流拿 1 或 2 个，拿走最后一个的人赢', players: '2 人', min: 2, max: 2, path: 'games/take-last/', colors: ['#ff86b5', '#e0488b']},
   {id: 'hero-guess', icon: '🕵️', name: '猜英雄', desc: '房主藏一个王者荣耀英雄，大家向 AI 提问推理（它不会直接说出名字），谁先报对英雄名谁得分。一个人也能测试', players: '1–10 人 · 抢答', min: 1, max: 10, path: 'games/hero-guess/', colors: ['#58657e', '#2b3347']},
-  {id: 'cut-circle', icon: '✂️⚪', name: '切圆', desc: '轮流划线把圆切小，小球在里面反弹还会变大，谁切到球谁输', players: '2 人', min: 2, max: 2, path: 'games/cut-circle/', appIcon: '✂️', colors: ['#4fd09a', '#1e9a72']}
+  {id: 'cut-circle', icon: '✂️⚪', name: '切圆', desc: '轮流划线把圆切小，小球在里面反弹还会变大，谁切到球谁输', players: '2 人', min: 2, max: 2, path: 'games/cut-circle/', appIcon: '✂️', colors: ['#4fd09a', '#1e9a72']},
+  {id: 'reversi', icon: '⚫⚪', name: '黑白棋', desc: '夹住对方的棋子就翻成自己的颜色，最后子多的人赢', players: '2 人', min: 2, max: 2, path: 'games/reversi/', appIcon: '⚫', colors: ['#3fae6b', '#14532d']}
 ]

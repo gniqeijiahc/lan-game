@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>黑白棋</title>
+<link rel="stylesheet" href="../../shared/style.css">
+<style>
+  .score { display:flex; justify-content:space-between; gap:8px; }
+  .side { flex:1; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px;
+    border:2px solid transparent; border-radius:10px; }
+  .side.turn { border-color:var(--accent); }
+  .side b { font-size:26px; line-height:1.2; }
+  .side span { font-size:13px; color:var(--muted); }
+  .chip { width:20px; height:20px; border-radius:50%; border:1px solid #888; background:#1b1b1b; }
+  .chip.w { background:#f7f7f7; }
+  .round { text-align:center; color:var(--muted); font-size:14px; margin-top:6px; }
+  #who { text-align:center; font-size:14px; min-height:22px; }
+  #result { text-align:center; font-size:22px; font-weight:700; min-height:34px; }
+  #result.win { color:var(--ok); } #result.lose { color:var(--bad); } #result.draw { color:var(--warn); }
+  #hint { text-align:center; color:var(--muted); font-size:14px; min-height:22px; margin-top:8px; }
+
+  /* 棋盘 8×8，宽度随屏幕缩放；卡片向两侧外扩，让窄屏上的格子尽量大 */
+  #game { padding:12px 2px; margin-left:-10px; margin-right:-10px; }
+  #game > :not(#board) { margin-left:10px; margin-right:10px; }
+  #board { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:1px; width:100%; max-width:420px;
+    margin:0 auto; padding:2px; background:#14532d; border-radius:8px; }
+  .cell { display:flex; align-items:center; justify-content:center; width:100%; aspect-ratio:1; min-width:0;
+    padding:0; margin:0; border:0; border-radius:0; background:#2e8b57; cursor:pointer; touch-action:manipulation; }
+  .cell:disabled { cursor:default; opacity:1; }
+  .cell span { display:block; border-radius:50%; }
+  .cell.b span, .cell.w span { width:82%; height:82%; box-shadow:0 1px 2px rgba(0,0,0,.45); }
+  .cell.b span { background:#1b1b1b; }
+  .cell.w span { background:#f7f7f7; }
+  .cell.hint span { width:28%; height:28%; background:rgba(0,0,0,.35); }
+  .cell.last { box-shadow:inset 0 0 0 3px #ffd43b; }
+  .cell.flip span { animation:flip .35s ease; }
+  @keyframes flip { 50% { transform:scaleX(.08); } }
+  @media (prefers-reduced-motion: reduce) { .cell.flip span { animation:none; } }
+
+  #again { display:block; width:calc(100% - 20px); margin-top:8px; min-height:48px; padding:12px; border:0; border-radius:12px;
+    background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; touch-action:manipulation; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" id="back" href="../../">← 返回游戏厅</a>
+  <h1>⚫⚪ 黑白棋</h1>
+
+  <div id="lobby"></div>
+
+  <div class="card" id="game">
+    <div class="score">
+      <div class="side" id="side0"><i class="chip"></i><b id="n0">2</b><span id="l0">黑方</span></div>
+      <div class="side" id="side1"><i class="chip w"></i><b id="n1">2</b><span id="l1">白方</span></div>
+    </div>
+    <div class="round" id="round">第 1 局</div>
+    <div id="who"></div>
+    <div id="result"></div>
+
+    <div id="board" role="group" aria-label="棋盘"></div>
+    <div id="hint"></div>
+
+    <button id="again" type="button" hidden>再来一局</button>
+  </div>
+  <div class="muted">规则：黑棋先下。落子必须把对方的棋子夹在自己两子之间（横、竖、斜都算），夹住的全部翻成自己的颜色。圆点是可以下的位置。无处可下就自动跳过；双方都不能下时，子多的一方赢。每局随机决定谁执黑。</div>
+</main>
+
+<script type="module">
+import {createLobby} from '../../shared/lobby.js'
+import {BLACK, EMPTY, initialBoard, flipsFor, count, nextTurn} from './logic.js'
+
+const $ = id => document.getElementById(id)
+$('back').href = '../../' + location.search   // 返回时保留 ?s= 参数
+
+const CELLS = 64
+const NAME = ['黑棋', '白棋']
+const HEX64 = /^[0-9a-f]{64}$/
+
+async function sha(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ---------- 状态（两边各自运行同一套规则，没有"主机"） ----------
+let room = null
+let opp = null                 // 对手 peerId
+let selfId = null              // 自己的 peerId
+let epoch = 0                  // 每次重置 +1，用来丢弃过期的异步结果
+let g = 1                      // 局数
+let phase = 'idle'             // idle 无对手 | seeding 决定先手 | playing 对局中 | over 本局结束
+let board = [], moves = [], myIdx = -1   // myIdx: 0 黑(先手) 1 白
+let result = null              // 0/1 赢家，-1 平局
+let last = -1, flipped = [], turn = BLACK, passedBy = -1
+let score = {me: 0, them: 0, draw: 0}
+let mine = null                // {g, seed, nonce, hash, revealed}
+let warn = ''
+const theirCommit = {}         // g -> hash
+const theirSeed = {}           // g -> seed
+const pending = new Map()      // n -> 格子编号，提前到达或乱序的对方落子
+
+let commitAct = null, revealAct = null, moveAct = null
+const send = (act, d) => act && act.send(d).catch(() => {})
+
+function newGameState() {
+  board = initialBoard()
+  moves = []; myIdx = -1; result = null; last = -1; flipped = []; turn = BLACK; passedBy = -1
+  mine = null; warn = ''
+  pending.clear()
+}
+
+function resetGame() {
+  epoch++
+  g = 1
+  score = {me: 0, them: 0, draw: 0}
+  for (const k in theirCommit) delete theirCommit[k]
+  for (const k in theirSeed) delete theirSeed[k]
+  newGameState()
+  phase = opp ? 'seeding' : 'idle'
+  render()
+  if (opp) beginSeed()
+}
+
+// ---------- 决定谁执黑：先交哈希，再揭晓种子，两个种子异或后取最低位 ----------
+async function beginSeed() {
+  const ep = epoch
+  if (!selfId) {
+    try { selfId = (await room.getSelf()).peerId } catch {}
+    if (ep !== epoch) return
+    if (!selfId) { warn = '⚠️ 无法获取自己的编号'; render(); return }
+  }
+  const seed = crypto.getRandomValues(new Uint32Array(1))[0]
+  const nonce = crypto.randomUUID()
+  const hash = await sha(`${g}|${seed}|${nonce}`)
+  if (ep !== epoch || phase !== 'seeding') return
+  mine = {g, seed, nonce, hash, revealed: false}
+  send(commitAct, {g, hash})
+  render()
+  tryReveal()
+}
+
+function tryReveal() {
+  if (phase !== 'seeding' || !mine || mine.revealed || !(mine.g in theirCommit)) return
+  mine.revealed = true
+  send(revealAct, {g: mine.g, seed: mine.seed, nonce: mine.nonce})
+  tryStart()
+}
+
+function tryStart() {
+  if (phase !== 'seeding' || !mine || !mine.revealed || !(g in theirSeed)) return
+  const lowId = selfId < opp ? selfId : opp
+  const highId = selfId < opp ? opp : selfId
+  const firstId = (((mine.seed ^ theirSeed[g]) >>> 0) & 1) === 0 ? lowId : highId
+  myIdx = selfId === firstId ? 0 : 1
+  phase = 'playing'
+  render()
+  drain()
+}
+
+// ---------- 落子 ----------
+// 双方共用：把一步棋落到棋盘上。不合法返回 false。
+function applyMove(idx) {
+  const who = turn, fl = flipsFor(board, idx, who)
+  if (!fl.length) return false
+  board[idx] = who
+  for (const i of fl) board[i] = who
+  last = idx; flipped = fl; passedBy = -1
+  moves.push(idx)
+  const nx = nextTurn(board, who)
+  if (nx) {
+    turn = nx.turn
+    if (nx.passed) passedBy = 1 - who
+  } else {
+    const b = count(board, 0), w = count(board, 1)
+    result = b === w ? -1 : b > w ? 0 : 1
+    phase = 'over'
+    if (result === -1) score.draw++
+    else if (result === myIdx) score.me++
+    else score.them++
+  }
+  return true
+}
+
+// 处理对方提前到达或乱序的落子：只接收"下一步"
+function drain() {
+  while (phase === 'playing' && turn !== myIdx) {
+    const n = moves.length + 1
+    if (!pending.has(n)) break
+    const idx = pending.get(n); pending.delete(n)
+    if (!applyMove(idx)) warn = '⚠️ 收到非法落子，已忽略'
+  }
+  for (const n of [...pending.keys()]) if (n <= moves.length) pending.delete(n)
+  render()
+}
+
+function play(idx) {
+  if (phase !== 'playing' || turn !== myIdx) return
+  const n = moves.length + 1
+  if (!applyMove(idx)) return
+  warn = ''
+  send(moveAct, {g, n, idx})
+  render()
+}
+
+function again() {
+  if (phase !== 'over' || !opp) return
+  for (const k in theirCommit) if (+k <= g) delete theirCommit[k]
+  for (const k in theirSeed) delete theirSeed[k]
+  g++
+  newGameState()
+  phase = 'seeding'
+  render()
+  beginSeed()
+}
+
+// ---------- 界面 ----------
+const cellEls = []
+for (let i = 0; i < CELLS; i++) {
+  const b = document.createElement('button')
+  b.type = 'button'
+  b.setAttribute('aria-label', `第 ${Math.floor(i / 8) + 1} 行第 ${i % 8 + 1} 列`)
+  b.appendChild(document.createElement('span'))
+  b.onclick = () => play(i)
+  $('board').appendChild(b); cellEls.push(b)
+}
+let animated = -1   // 已经播过翻子动画的步数，避免每次 render 重播
+
+function render() {
+  const canPlay = phase === 'playing' && turn === myIdx
+  const fresh = moves.length !== animated
+  animated = moves.length
+  cellEls.forEach((b, i) => {
+    const v = board[i]
+    const ok = canPlay && v === EMPTY && flipsFor(board, i, myIdx).length > 0
+    const flip = flipped.includes(i) && (fresh || b.classList.contains('flip'))
+    b.className = 'cell' + (v === 0 ? ' b' : v === 1 ? ' w' : '') + (ok ? ' hint' : '') + (i === last ? ' last' : '') + (flip ? ' flip' : '')
+    b.disabled = !ok
+  })
+
+  for (const c of [0, 1]) {
+    $('n' + c).textContent = count(board, c)
+    $('l' + c).textContent = myIdx < 0 ? (c ? '白方' : '黑方') : (c === myIdx ? '我' : '对方')
+    $('side' + c).classList.toggle('turn', phase === 'playing' && turn === c)
+  }
+  $('round').textContent = `第 ${g} 局 · 胜场 我 ${score.me} : ${score.them} 对方` + (score.draw ? ` · 平 ${score.draw}` : '')
+  $('who').textContent = myIdx >= 0 ? `你执${NAME[myIdx]}（${myIdx === 0 ? '先手' : '后手'}）` : ''
+
+  let res = '', cls = '', hint = ''
+  if (phase === 'idle') hint = '等对方加入…'
+  else if (phase === 'seeding') {
+    if (g in theirCommit) hint = '正在决定谁执黑…'
+    else hint = g === 1 ? '正在连接对手…' : '已请求再来一局，等对方确认…'
+  } else if (phase === 'playing') {
+    hint = canPlay ? '轮到你了，点圆点落子' : '等待对方落子…'
+    if (passedBy >= 0) hint = (passedBy === myIdx ? '你无处可下，跳过。' : '对方无处可下，跳过。') + hint
+  } else {
+    if (result === -1) { res = '平局'; cls = 'draw' }
+    else if (result === myIdx) { res = '你赢了 🎉'; cls = 'win' }
+    else { res = '你输了'; cls = 'lose' }
+    hint = (g + 1) in theirCommit ? '对方想再来一局' : ''
+  }
+  $('result').textContent = res
+  $('result').className = cls
+  $('hint').textContent = warn || hint
+  $('again').hidden = phase !== 'over'
+}
+
+$('again').onclick = again
+newGameState()
+render()
+
+await createLobby({
+  gameId: 'reversi',
+  container: $('lobby'),
+  setup(r) {
+    room = r
+    commitAct = room.makeAction('commit')
+    revealAct = room.makeAction('reveal')
+    moveAct = room.makeAction('move')
+
+    commitAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || typeof d.hash !== 'string' || !HEX64.test(d.hash)) return
+      if (!Number.isInteger(d.g)) return
+      const ok = (phase === 'seeding' && d.g === g) || (phase === 'over' && d.g === g + 1)
+      if (!ok || d.g in theirCommit) return
+      theirCommit[d.g] = d.hash
+      render()
+      tryReveal()
+    })
+
+    revealAct.onMessage(async (d, {peerId}) => {
+      if (peerId !== opp || !d || phase !== 'seeding') return
+      if (!Number.isInteger(d.g) || d.g !== g || d.g in theirSeed) return
+      if (!Number.isInteger(d.seed) || d.seed < 0 || d.seed > 0xFFFFFFFF) return
+      if (typeof d.nonce !== 'string' || d.nonce.length > 64) return
+      const c = theirCommit[d.g]
+      if (!c) return
+      const ep = epoch, gg = g
+      const h = await sha(`${d.g}|${d.seed}|${d.nonce}`)
+      if (ep !== epoch || phase !== 'seeding' || gg !== g || g in theirSeed) return
+      if (h !== c) { warn = '⚠️ 对方的种子校验失败'; render(); return }
+      theirSeed[g] = d.seed
+      tryStart()
+    })
+
+    moveAct.onMessage((d, {peerId}) => {
+      if (peerId !== opp || !d || (phase !== 'seeding' && phase !== 'playing')) return
+      if (!Number.isInteger(d.g) || d.g !== g) return
+      if (!Number.isInteger(d.n) || d.n < 1 || d.n > CELLS - 4) return
+      if (!Number.isInteger(d.idx) || d.idx < 0 || d.idx >= CELLS) return
+      if (d.n <= moves.length || pending.has(d.n)) return    // 过期或重复
+      pending.set(d.n, d.idx)
+      drain()
+    })
+  },
+  onOpponentJoin(id) { opp = id; resetGame() },
+  onOpponentLeave() { opp = null; resetGame() }
+})
+</script>
+</body>
+</html>
