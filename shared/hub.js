@@ -27,6 +27,15 @@ $('joinForm').onsubmit = e => { e.preventDefault(); join($('code').value.trim(),
 $('leave1').onclick = $('leave2').onclick = () => leave()
 $('endGame').onclick = () => room && room.endGame()
 
+// 成员名单和邀请二维码：点按钮才从底部弹出；点“关闭”或灰色区域收起
+const sheets = ['rosterSheet', 'inviteSheet'].map($)
+const closeSheets = () => sheets.forEach(d => { if (d.open) d.close() })
+$('openRoster').onclick = () => $('rosterSheet').showModal()
+$('openInvite').onclick = () => { $('copy').textContent = '复制'; $('inviteSheet').showModal() }
+sheets.forEach(d => {
+  d.onclick = e => { if (e.target === d || e.target.closest('[data-close]')) d.close() }
+})
+
 async function join(code, name) {
   if (!/^\d{4}$/.test(code)) return setErr('请输入 4 位数字的房间号')
   if (!name) return setErr('请先输入昵称')
@@ -47,6 +56,7 @@ async function join(code, name) {
 }
 
 function leave(msg) {
+  closeSheets()
   unmountStage()
   if (room) room.leave()
   room = null; snap = null
@@ -58,7 +68,7 @@ function leave(msg) {
 function onSnap(s) {
   snap = s
   if (s.status === 'full') return leave(`房间已满（最多 ${MAX_MEMBERS} 人）`)
-  if (s.status !== 'ready') { show('connecting'); return }
+  if (s.status !== 'ready') { closeSheets(); show('connecting'); return }
   const g = s.session.gameId && gameById(s.session.gameId)
   if (g) renderPlay(s, g); else renderLobby(s)
 }
@@ -101,7 +111,9 @@ function renderLobby(s) {
   show('lobby')
   $('lbCode').textContent = s.code
   $('lbRole').textContent = s.isHost ? '你是房主' : '你是客人'
-  $('lbCount').textContent = `${s.members.length}/${MAX_MEMBERS} 人`
+  $('lbRole').classList.toggle('guest', !s.isHost)
+  $('lbCount').textContent = `${s.members.length}/${MAX_MEMBERS}`
+  $('rosterCount').textContent = $('lbCount').textContent
   renderRoster($('lbRoster'), s)
   renderShare(s.code)
   $('lbHint').textContent = s.isHost ? '请选择要玩的游戏，所有人会自动进入。' : `等待房主（${s.members[0].name}）选择游戏…`
@@ -109,11 +121,12 @@ function renderLobby(s) {
   GAMES.forEach(g => {
     const b = document.createElement('button')
     b.type = 'button'; b.className = 'game'; b.disabled = !s.isHost
-    b.innerHTML = '<div class="icon"></div><div class="info"><div class="name"></div><div class="desc"></div><span class="tag"></span></div>'
-    b.querySelector('.icon').textContent = g.icon
+    b.innerHTML = '<span class="icon" aria-hidden="true"></span><span class="name"></span>'
+    const icon = b.querySelector('.icon')
+    icon.textContent = g.appIcon || g.icon
+    const [from, to] = g.colors || ['#7d8aa5', '#4a5570']
+    icon.style.background = `linear-gradient(145deg, ${from}, ${to})`
     b.querySelector('.name').textContent = g.name
-    b.querySelector('.desc').textContent = g.desc
-    b.querySelector('.tag').textContent = g.players + (g.max < MAX_MEMBERS ? ' · 其余观战' : '')
     b.onclick = () => room && room.startGame(g.id, g.max)
     box.appendChild(b)
   })
@@ -142,6 +155,7 @@ const namesOf = s => Object.fromEntries(s.members.map(m => [m.id, m.name]))   //
 const spectatorsOf = s => s.members.map(m => m.id).filter(id => !s.session.players.includes(id))
 
 function renderPlay(s, g) {
+  closeSheets()
   show('play')
   const isPlayer = s.session.players.includes(s.selfId)
   const nameOf = id => (s.members.find(m => m.id === id) || {}).name || '?'

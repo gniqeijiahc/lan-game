@@ -98,8 +98,10 @@ await createLobby({
 在 `games/registry.js` 的 `GAMES` 数组里加一项（其他项不动）：
 
 ```js
-{id: 'gomoku', icon: '⚫⚪', name: '五子棋', desc: '一句话说明玩法', players: '2 人', min: 2, max: 2, path: 'games/gomoku/'}
+{id: 'gomoku', icon: '⚫⚪', name: '五子棋', desc: '一句话说明玩法', players: '2 人', min: 2, max: 2, path: 'games/gomoku/', appIcon: '⚫', colors: ['#7d8aa5', '#4a5570']}
 ```
+
+大厅只显示图标和名字：`name` 最多 5 个字；`colors` 是图标的两个渐变色（可选）；`icon` 含多个表情时用 `appIcon` 指定单个表情（可选）。
 
 `min` / `max` 是玩家人数范围，超出 `max` 的人会成为观战者。**不再修改根目录 `index.html`**。同时在 `README.md` 的目录结构里补上新游戏。
 
